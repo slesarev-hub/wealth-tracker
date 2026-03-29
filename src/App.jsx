@@ -391,6 +391,61 @@ export default function App() {
               </div>
             )}
 
+            {activeAccounts.length > 0 && months.length > 0 && (() => {
+              const lastM = months[months.length - 1];
+              const rubTotal = latestTotals["RUB"] || 0;
+
+              const byCurrency = {};
+              activeAccounts.forEach(acc => {
+                const snap = getSnapshot(acc.id, lastM);
+                if (!snap) return;
+                if (!byCurrency[acc.currency]) byCurrency[acc.currency] = { sum: 0, rubSum: 0 };
+                byCurrency[acc.currency].sum += snap.balance;
+                byCurrency[acc.currency].rubSum += convert(snap.balance, acc.currency, "RUB");
+              });
+
+              const byType = {};
+              activeAccounts.forEach(acc => {
+                const snap = getSnapshot(acc.id, lastM);
+                if (!snap) return;
+                const t = ACCOUNT_TYPES.find(t => t.id === acc.type) || { id: acc.type, label: acc.type, icon: "🗂️" };
+                if (!byType[t.id]) byType[t.id] = { label: t.label, icon: t.icon, rubSum: 0 };
+                byType[t.id].rubSum += convert(snap.balance, acc.currency, "RUB");
+              });
+
+              return (<>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 24 }}>
+                  <div style={{ background: "#111320", border: "1px solid #1e2030", borderRadius: 12, padding: "16px 20px" }}>
+                    <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>По валютам</div>
+                    {Object.entries(byCurrency).sort((a, b) => b[1].rubSum - a[1].rubSum).map(([cur, { sum, rubSum }]) => (
+                      <div key={cur} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #141620" }}>
+                        <div>
+                          <span style={{ fontSize: 13 }}>{CURRENCY_SYMBOLS[cur] || cur} {fmtBalance(sum, cur)}</span>
+                          <span style={{ fontSize: 11, color: "#4b5563", marginLeft: 4 }}>{cur}</span>
+                        </div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontSize: 12, color: "#9ca3af" }}>{fmtShort(rubSum)} ₽</div>
+                          {rubTotal > 0 && <div style={{ fontSize: 10, color: "#4b5563" }}>{(rubSum / rubTotal * 100).toFixed(0)}%</div>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ background: "#111320", border: "1px solid #1e2030", borderRadius: 12, padding: "16px 20px" }}>
+                    <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 12, letterSpacing: "0.08em", textTransform: "uppercase" }}>По инструментам</div>
+                    {Object.values(byType).sort((a, b) => b.rubSum - a.rubSum).map(({ label, icon, rubSum }) => (
+                      <div key={label} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", borderBottom: "1px solid #141620" }}>
+                        <div style={{ fontSize: 13 }}>{icon} {label}</div>
+                        <div style={{ textAlign: "right" }}>
+                          <div style={{ fontSize: 12, color: "#9ca3af" }}>{fmtShort(rubSum)} ₽</div>
+                          {rubTotal > 0 && <div style={{ fontSize: 10, color: "#4b5563" }}>{(rubSum / rubTotal * 100).toFixed(0)}%</div>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </>);
+            })()}
+
             {activeAccounts.length > 0 && months.length > 0 && (
               <div style={{ background: "#111320", border: "1px solid #1e2030", borderRadius: 12, overflow: "hidden", marginBottom: 24 }}>
                 <div style={{ padding: "13px 22px", borderBottom: "1px solid #1e2030", fontSize: 11, color: "#6b7280", letterSpacing: "0.08em", textTransform: "uppercase" }}>
