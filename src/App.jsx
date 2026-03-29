@@ -16,6 +16,7 @@ const ACCOUNT_TYPES = [
   { id: "cash", label: "Наличные", icon: "💵" },
   { id: "investment", label: "Инвестиции", icon: "📊" },
   { id: "crypto", label: "Крипто", icon: "🪙" },
+  { id: "debt", label: "Долг", icon: "🔻" },
   { id: "other", label: "Другое", icon: "🗂️" },
 ];
 const FIAT_CURRENCIES = ["RUB", "USD", "EUR", "GBP", "AED"];
@@ -108,27 +109,32 @@ export default function App() {
     try { const cached = JSON.parse(localStorage.getItem(LS_RATES)); if (cached?.rates) return cached; } catch {}
     return null;
   });
+  const [ratesErrors, setRatesErrors] = useState([]);
 
   useEffect(() => {
+    const errors = [];
     Promise.all([
-      fetch("https://open.er-api.com/v6/latest/USD").then(r => r.json()),
-      fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${Object.values(CRYPTO_IDS).join(",")}&vs_currencies=usd`).then(r => r.json()).catch(() => null),
+      fetch("https://open.er-api.com/v6/latest/USD").then(r => r.json()).catch(() => { errors.push("open.er-api.com (фиат)"); return null; }),
+      fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${Object.values(CRYPTO_IDS).join(",")}&vs_currencies=usd`).then(r => r.json()).catch(() => { errors.push("CoinGecko (крипто)"); return null; }),
     ]).then(([fiat, crypto]) => {
-      if (fiat.result !== "success") return;
+      if (!fiat || fiat.result !== "success") { errors.push("open.er-api.com (фиат)"); setRatesErrors([...new Set(errors)]); return; }
       if (crypto) {
         Object.entries(CRYPTO_IDS).forEach(([sym, id]) => {
           if (crypto[id]?.usd) fiat.rates[sym] = 1 / crypto[id].usd;
         });
+      } else if (!errors.includes("CoinGecko (крипто)")) {
+        errors.push("CoinGecko (крипто)");
       }
       setRates(fiat);
       localStorage.setItem(LS_RATES, JSON.stringify(fiat));
-    }).catch(() => {});
+      setRatesErrors([...new Set(errors)]);
+    }).catch(() => { setRatesErrors(["open.er-api.com (фиат)", "CoinGecko (крипто)"]); });
   }, []);
 
   const convert = (amount, from, to) => {
-    if (from === to || !rates?.rates) return amount;
-    const inUsd = amount / rates.rates[from];
-    return inUsd * rates.rates[to];
+    if (from === to) return amount;
+    if (!rates?.rates || !rates.rates[from] || !rates.rates[to]) return NaN;
+    return amount / rates.rates[from] * rates.rates[to];
   };
 
   const [clientId, setClientId] = useState(() => localStorage.getItem(LS_CLIENT) || "");
@@ -206,13 +212,16 @@ export default function App() {
 
   const isClosedAt = (acc, month) => acc.closed && acc.closedMonth && month > acc.closedMonth;
 
+  const balSign = (acc) => acc?.type === "debt" ? -1 : 1;
+
   const monthTotal = (m, toCurrency) => {
     return data.snapshots
       .filter(s => s.month === m && !isClosedAt(data.accounts.find(a => a.id === s.accountId) || {}, m))
       .reduce((sum, s) => {
         const acc = data.accounts.find(a => a.id === s.accountId);
         const bal = parseFloat(s.balance) || 0;
-        return sum + (toCurrency && acc ? convert(bal, acc.currency, toCurrency) : bal);
+        const converted = toCurrency && acc ? convert(bal, acc.currency, toCurrency) : bal;
+        return sum + converted * balSign(acc);
       }, 0);
   };
 
@@ -327,6 +336,13 @@ export default function App() {
             <span>{syncStatus === "idle" ? (clientId ? "Войти в Google" : "Настроить Sheets") : (syncMsg || "Sheets")}</span>
           </div>
 
+          {ratesErrors.length > 0 && (
+            <div className="sync-pill" style={{ border: "1px solid #f8717133", color: "#f87171" }} title={ratesErrors.join(", ")}>
+              <span style={{ fontSize: 14 }}>⚠</span>
+              <span>Курс: {ratesErrors.join(", ")}</span>
+            </div>
+          )}
+
           <div style={{ display: "flex", gap: 2 }}>
             {[["dashboard","Обзор"],["accounts","Счета"],["history","История"]].map(([id, label]) => (
               <button key={id} className="tab-btn" onClick={() => setTab(id)} style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, fontFamily: "inherit", color: tab === id ? "#6ee7b7" : "#6b7280", background: tab === id ? "#1a2820" : "none" }}>{label}</button>
@@ -400,8 +416,9 @@ export default function App() {
                 const snap = getSnapshot(acc.id, lastM);
                 if (!snap) return;
                 if (!byCurrency[acc.currency]) byCurrency[acc.currency] = { sum: 0, rubSum: 0 };
-                byCurrency[acc.currency].sum += snap.balance;
-                byCurrency[acc.currency].rubSum += convert(snap.balance, acc.currency, "RUB");
+                const sign = balSign(acc);
+                byCurrency[acc.currency].sum += snap.balance * sign;
+                byCurrency[acc.currency].rubSum += convert(snap.balance, acc.currency, "RUB") * sign;
               });
 
               const byType = {};
@@ -410,7 +427,7 @@ export default function App() {
                 if (!snap) return;
                 const t = ACCOUNT_TYPES.find(t => t.id === acc.type) || { id: acc.type, label: acc.type, icon: "🗂️" };
                 if (!byType[t.id]) byType[t.id] = { label: t.label, icon: t.icon, rubSum: 0 };
-                byType[t.id].rubSum += convert(snap.balance, acc.currency, "RUB");
+                byType[t.id].rubSum += convert(snap.balance, acc.currency, "RUB") * balSign(acc);
               });
 
               return (<>
@@ -464,7 +481,7 @@ export default function App() {
                         <div style={{ fontSize: 11, color: "#4b5563", marginTop: 2 }}>{acc.currency}{pnl != null && <span style={{ color: pnl >= 0 ? "#6ee7b7" : "#f87171", marginLeft: 6 }}>P&L {pnl >= 0 ? "+" : ""}{fmtShort(pnl)}</span>}</div>
                       </div>
                       <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 14 }}>{snap ? fmtBalance(snap.balance, acc.currency) + " " + acc.currency : "—"}</div>
+                        <div style={{ fontSize: 14, color: acc.type === "debt" ? "#f87171" : undefined }}>{snap ? (acc.type === "debt" ? "−" : "") + fmtBalance(snap.balance, acc.currency) + " " + acc.currency : "—"}</div>
                         {d !== null && <div style={{ fontSize: 11, color: d >= 0 ? "#6ee7b7" : "#f87171", marginTop: 2 }}>{d >= 0 ? "+" : ""}{fmtShort(d)}</div>}
                       </div>
                     </div>
@@ -727,7 +744,7 @@ export default function App() {
             </div>
             <div style={{ marginTop: 18, padding: "12px 16px", background: "#0d0f14", borderRadius: 8, fontSize: 13, color: "#9ca3af", display: "flex", justifyContent: "space-between" }}>
               <span>Итого</span>
-              <span style={{ color: "#6ee7b7" }}>{fmtShort(activeAccounts.reduce((s, acc) => s + convert(parseFloat(recordValues[acc.id]) || 0, acc.currency, "RUB"), 0))} ₽</span>
+              <span style={{ color: "#6ee7b7" }}>{fmtShort(activeAccounts.reduce((s, acc) => s + convert(parseFloat(recordValues[acc.id]) || 0, acc.currency, "RUB") * balSign(acc), 0))} ₽</span>
             </div>
             <div style={{ display: "flex", gap: 10, marginTop: 18 }}>
               <button className="btn-ghost" style={{ flex: 1 }} onClick={() => setModal(null)}>Отмена</button>
