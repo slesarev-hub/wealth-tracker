@@ -31,6 +31,12 @@ const fmtShort = (n) => {
   return Number(n).toFixed(0);
 };
 
+const fmtBalance = (n, currency) => {
+  if (isNaN(n) || n === null) return "—";
+  if (CRYPTO_CURRENCIES.includes(currency)) return String(n);
+  return fmtShort(n);
+};
+
 const monthLabel = (ym) => {
   if (!ym) return "";
   const [y, m] = ym.split("-");
@@ -403,7 +409,7 @@ export default function App() {
                         <div style={{ fontSize: 11, color: "#4b5563", marginTop: 2 }}>{acc.currency}{pnl != null && <span style={{ color: pnl >= 0 ? "#6ee7b7" : "#f87171", marginLeft: 6 }}>P&L {pnl >= 0 ? "+" : ""}{fmtShort(pnl)}</span>}</div>
                       </div>
                       <div style={{ textAlign: "right" }}>
-                        <div style={{ fontSize: 14 }}>{snap ? fmtShort(snap.balance) + " " + acc.currency : "—"}</div>
+                        <div style={{ fontSize: 14 }}>{snap ? fmtBalance(snap.balance, acc.currency) + " " + acc.currency : "—"}</div>
                         {d !== null && <div style={{ fontSize: 11, color: d >= 0 ? "#6ee7b7" : "#f87171", marginTop: 2 }}>{d >= 0 ? "+" : ""}{fmtShort(d)}</div>}
                       </div>
                     </div>
@@ -512,7 +518,7 @@ export default function App() {
                                 <span style={{ marginRight: 10, fontSize: 14 }}>{typeIcon(acc.type)}</span>
                                 <div style={{ flex: 1, fontSize: 13, color: "#9ca3af" }}>{acc.name}</div>
                                 <div style={{ textAlign: "right" }}>
-                                  <div style={{ fontSize: 13 }}>{fmtShort(snap.balance)} {acc.currency}</div>
+                                  <div style={{ fontSize: 13 }}>{fmtBalance(snap.balance, acc.currency)} {acc.currency}</div>
                                   {HAS_PNL.has(acc.type) && snap.invested != null && (() => { const pl = snap.balance - snap.invested; return (
                                     <div style={{ fontSize: 10, color: pl >= 0 ? "#6ee7b7" : "#f87171", marginTop: 2 }}>внесено {fmtShort(snap.invested)} · P&L {pl >= 0 ? "+" : ""}{fmtShort(pl)}</div>
                                   ); })()}
