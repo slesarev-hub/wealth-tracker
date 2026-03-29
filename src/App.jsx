@@ -413,12 +413,12 @@ export default function App() {
 
               const byCurrency = {};
               activeAccounts.forEach(acc => {
+                if (acc.type === "debt") return;
                 const snap = getSnapshot(acc.id, lastM);
                 if (!snap) return;
                 if (!byCurrency[acc.currency]) byCurrency[acc.currency] = { sum: 0, rubSum: 0 };
-                const sign = balSign(acc);
-                byCurrency[acc.currency].sum += snap.balance * sign;
-                byCurrency[acc.currency].rubSum += convert(snap.balance, acc.currency, "RUB") * sign;
+                byCurrency[acc.currency].sum += snap.balance;
+                byCurrency[acc.currency].rubSum += convert(snap.balance, acc.currency, "RUB");
               });
 
               const byType = {};
@@ -429,6 +429,8 @@ export default function App() {
                 if (!byType[t.id]) byType[t.id] = { label: t.label, icon: t.icon, rubSum: 0 };
                 byType[t.id].rubSum += convert(snap.balance, acc.currency, "RUB") * balSign(acc);
               });
+
+              const assetsRubTotal = Object.values(byCurrency).reduce((s, { rubSum }) => s + (rubSum || 0), 0);
 
               return (<>
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 24 }}>
@@ -442,7 +444,7 @@ export default function App() {
                         </div>
                         <div style={{ textAlign: "right" }}>
                           <div style={{ fontSize: 12, color: "#9ca3af" }}>{fmtShort(rubSum)} ₽</div>
-                          {rubTotal > 0 && <div style={{ fontSize: 10, color: "#4b5563" }}>{(rubSum / rubTotal * 100).toFixed(0)}%</div>}
+                          {assetsRubTotal > 0 && <div style={{ fontSize: 10, color: "#4b5563" }}>{(rubSum / assetsRubTotal * 100).toFixed(0)}%</div>}
                         </div>
                       </div>
                     ))}
