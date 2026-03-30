@@ -29,6 +29,7 @@ const fmtShort = (n) => {
   if (isNaN(n) || n === null) return "—";
   if (Math.abs(n) >= 1_000_000) return (n / 1_000_000).toFixed(1) + "M";
   if (Math.abs(n) >= 1_000) return (n / 1_000).toFixed(0) + "K";
+  if (Math.abs(n) < 1 && n !== 0) return Number(n).toPrecision(3);
   return Number(n).toFixed(0);
 };
 
@@ -66,10 +67,11 @@ const sheetsClear = async (token, sid, range) => {
   );
 };
 const sheetsUpdate = async (token, sid, range, values) => {
-  await fetch(
+  const r = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${sid}/values/${encodeURIComponent(range)}?valueInputOption=RAW`,
     { method: "PUT", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify({ values }) }
   );
+  if (!r.ok) throw new Error(`Sheets update failed: ${r.status}`);
 };
 const createSpreadsheet = async (token) => {
   const r = await fetch("https://sheets.googleapis.com/v4/spreadsheets", {
@@ -90,7 +92,7 @@ const writeToSheets = async (token, sid, data) => {
   await sheetsClear(token, sid, "Accounts!A1:Z");
   await sheetsClear(token, sid, "Snapshots!A1:Z");
   await sheetsUpdate(token, sid, "Accounts!A1", [["id","name","type","currency","closed","closedMonth"], ...data.accounts.map(a => [a.id,a.name,a.type,a.currency,a.closed ? "true" : "",a.closedMonth || ""])]);
-  await sheetsUpdate(token, sid, "Snapshots!A1", [["id","accountId","month","balance","invested"], ...data.snapshots.map(s => [s.id,s.accountId,s.month,s.balance,s.invested ?? ""])]);
+  await sheetsUpdate(token, sid, "Snapshots!A1", [["id","accountId","month","balance","invested"], ...data.snapshots.map(s => [s.id,s.accountId,s.month,String(s.balance),s.invested != null ? String(s.invested) : ""])]);
 };
 
 // ── App ───────────────────────────────────────────────────────────────────────
@@ -199,10 +201,10 @@ export default function App() {
   };
 
   const syncTo = useCallback(async (next, tk = token, sid = sheetId) => {
-    if (!tk || !sid) return;
+    if (!tk || !sid) { setSyncStatus("error"); setSyncMsg("Не подключено к Sheets"); return; }
     setSyncStatus("syncing");
     try { await writeToSheets(tk, sid, next); setSyncStatus("ok"); setSyncMsg("Сохранено ✓"); }
-    catch { setSyncStatus("error"); setSyncMsg("Ошибка записи в Sheets"); }
+    catch (e) { setSyncStatus("error"); setSyncMsg("Ошибка записи: " + e.message); }
   }, [token, sheetId]);
 
   const save = useCallback((next) => {
@@ -754,15 +756,15 @@ export default function App() {
                     <div style={{ display: "flex", gap: 8 }}>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 10, color: "#4b5563", marginBottom: 4 }}>Стоимость</div>
-                        <input className="inp" type="number" placeholder="0" value={recordValues[acc.id] || ""} onChange={e => setRecordValues({ ...recordValues, [acc.id]: e.target.value })} />
+                        <input className="inp" type="number" step="any" placeholder="0" value={recordValues[acc.id] ?? ""} onChange={e => setRecordValues({ ...recordValues, [acc.id]: e.target.value })} />
                       </div>
                       <div style={{ flex: 1 }}>
                         <div style={{ fontSize: 10, color: "#4b5563", marginBottom: 4 }}>Внесено</div>
-                        <input className="inp" type="number" placeholder="0" value={recordInvested[acc.id] || ""} onChange={e => setRecordInvested({ ...recordInvested, [acc.id]: e.target.value })} />
+                        <input className="inp" type="number" step="any" placeholder="0" value={recordInvested[acc.id] ?? ""} onChange={e => setRecordInvested({ ...recordInvested, [acc.id]: e.target.value })} />
                       </div>
                     </div>
                   ) : (
-                    <input className="inp" type="number" placeholder="0" value={recordValues[acc.id] || ""} onChange={e => setRecordValues({ ...recordValues, [acc.id]: e.target.value })} />
+                    <input className="inp" type="number" step="any" placeholder="0" value={recordValues[acc.id] ?? ""} onChange={e => setRecordValues({ ...recordValues, [acc.id]: e.target.value })} />
                   )}
                 </div>
               ))}
