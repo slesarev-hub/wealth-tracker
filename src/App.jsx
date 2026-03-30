@@ -139,6 +139,7 @@ export default function App() {
 
   const [clientId, setClientId] = useState(() => localStorage.getItem(LS_CLIENT) || "");
   const [clientIdDraft, setClientIdDraft] = useState("");
+  const [sheetIdDraft, setSheetIdDraft] = useState("");
   const [token, setToken] = useState(null);
   const [sheetId, setSheetId] = useState(() => localStorage.getItem(LS_GSHEET) || "");
   const [syncStatus, setSyncStatus] = useState("idle");
@@ -282,7 +283,16 @@ export default function App() {
   const deleteAccount = (id) => save({ accounts: data.accounts.filter(a => a.id !== id), snapshots: data.snapshots.filter(s => s.accountId !== id) });
   const deleteMonth = (month) => { save({ ...data, snapshots: data.snapshots.filter(s => s.month !== month) }); setSelectedMonth(null); };
 
-  const saveClientId = () => { localStorage.setItem(LS_CLIENT, clientIdDraft); setClientId(clientIdDraft); setModal(null); };
+  const saveClientId = () => {
+    localStorage.setItem(LS_CLIENT, clientIdDraft); setClientId(clientIdDraft);
+    const trimmedSheet = sheetIdDraft.trim();
+    if (trimmedSheet) {
+      const match = trimmedSheet.match(/\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/);
+      const id = match ? match[1] : trimmedSheet;
+      setSheetId(id); localStorage.setItem(LS_GSHEET, id);
+    }
+    setModal(null);
+  };
   const disconnect = () => { setToken(null); setSheetId(""); setClientId(""); localStorage.removeItem(LS_GSHEET); localStorage.removeItem(LS_CLIENT); setSyncStatus("idle"); setSyncMsg(""); };
 
   const typeIcon = (type) => ACCOUNT_TYPES.find(t => t.id === type)?.icon || "🗂️";
@@ -328,13 +338,21 @@ export default function App() {
 
           <div className="sync-pill" style={{ border: `1px solid ${syncColor}33`, color: syncColor }}
             onClick={() => {
-              if (!clientId) { setClientIdDraft(""); setModal("setup"); }
+              if (!clientId) { setClientIdDraft(""); setSheetIdDraft(""); setModal("setup"); }
               else if (!token) requestToken();
               else syncFrom(token, sheetId);
             }}>
             {syncStatus === "syncing" ? <span className="spin">↻</span> : <span style={{ fontSize: 14 }}>⬡</span>}
             <span>{syncStatus === "idle" ? (clientId ? "Войти в Google" : "Настроить Sheets") : (syncMsg || "Sheets")}</span>
           </div>
+
+          {clientId && (
+            <div className="sync-pill" style={{ border: "1px solid #2a2d38", color: "#6b7280", padding: "4px 6px" }}
+              onClick={() => { setClientIdDraft(clientId); setSheetIdDraft(sheetId); setModal("setup"); }}
+              title="Настройки Sheets">
+              <span style={{ fontSize: 13 }}>⚙</span>
+            </div>
+          )}
 
           {ratesErrors.length > 0 && (
             <div className="sync-pill" style={{ border: "1px solid #f8717133", color: "#f87171" }} title={ratesErrors.join(", ")}>
@@ -543,7 +561,7 @@ export default function App() {
               ) : (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
                   <div style={{ fontSize: 13, color: "#6b7280" }}>{clientId ? "Требуется авторизация" : "Не настроено"}</div>
-                  <button className="btn-primary" style={{ fontSize: 12, padding: "7px 14px" }} onClick={() => clientId ? requestToken() : (setClientIdDraft(""), setModal("setup"))}>
+                  <button className="btn-primary" style={{ fontSize: 12, padding: "7px 14px" }} onClick={() => clientId ? requestToken() : (setClientIdDraft(""), setSheetIdDraft(""), setModal("setup"))}>
                     {clientId ? "Войти" : "Настроить"}
                   </button>
                 </div>
@@ -643,6 +661,11 @@ export default function App() {
             <div style={{ marginBottom: 20 }}>
               <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6, letterSpacing: "0.06em" }}>CLIENT ID</div>
               <input className="inp" placeholder="xxxxxxx.apps.googleusercontent.com" value={clientIdDraft} onChange={e => setClientIdDraft(e.target.value)} />
+            </div>
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6, letterSpacing: "0.06em" }}>GOOGLE SHEET <span style={{ opacity: 0.6 }}>(необязательно)</span></div>
+              <input className="inp" placeholder="Ссылка на таблицу или ID — оставь пустым для новой" value={sheetIdDraft} onChange={e => setSheetIdDraft(e.target.value)} />
+              <div style={{ fontSize: 11, color: "#4b5563", marginTop: 6 }}>Если у тебя уже есть заполненная таблица — вставь ссылку или ID, чтобы не создавать новую</div>
             </div>
             <div style={{ display: "flex", gap: 10 }}>
               <button className="btn-ghost" style={{ flex: 1 }} onClick={() => setModal(null)}>Отмена</button>
