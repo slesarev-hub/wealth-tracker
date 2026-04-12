@@ -238,12 +238,14 @@ export default function App() {
 
   const activeAccounts = data.accounts.filter(a => !a.closed);
 
+  const prevMonth = (m) => { const d = new Date(m + "-15"); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); };
+
   const openRecord = (m) => {
     const mn = m || recordMonth;
     setRecordMonth(mn);
     const vals = {}, inv = {};
     activeAccounts.forEach(a => {
-      const snap = getSnapshot(a.id, mn);
+      const snap = getSnapshot(a.id, mn) || getSnapshot(a.id, prevMonth(mn));
       vals[a.id] = snap ? String(snap.balance) : "";
       if (HAS_PNL.has(a.type)) inv[a.id] = snap?.invested != null ? String(snap.invested) : "";
     });
@@ -739,7 +741,7 @@ export default function App() {
               setRecordMonth(e.target.value);
               const vals = {}, inv = {};
               activeAccounts.forEach(a => {
-                const snap = getSnapshot(a.id, e.target.value);
+                const snap = getSnapshot(a.id, e.target.value) || getSnapshot(a.id, prevMonth(e.target.value));
                 vals[a.id] = snap ? String(snap.balance) : "";
                 if (HAS_PNL.has(a.type)) inv[a.id] = snap?.invested != null ? String(snap.invested) : "";
               });
