@@ -245,9 +245,15 @@ export default function App() {
     setRecordMonth(mn);
     const vals = {}, inv = {};
     activeAccounts.forEach(a => {
-      const snap = getSnapshot(a.id, mn) || getSnapshot(a.id, prevMonth(mn));
+      const curSnap = getSnapshot(a.id, mn);
+      const snap = curSnap || getSnapshot(a.id, prevMonth(mn));
       vals[a.id] = snap ? String(snap.balance) : "";
-      if (HAS_PNL.has(a.type)) inv[a.id] = snap?.invested != null ? String(snap.invested) : "";
+      if (HAS_PNL.has(a.type)) {
+        if (curSnap?.invested != null) {
+          const prev = getSnapshot(a.id, prevMonth(mn));
+          inv[a.id] = String(curSnap.invested - (prev?.invested ?? 0));
+        } else inv[a.id] = "0";
+      }
     });
     setRecordValues(vals);
     setRecordInvested(inv);
@@ -261,7 +267,14 @@ export default function App() {
       const balance = parseFloat(val.replace(/\s/g, "").replace(",", "."));
       if (isNaN(balance)) return;
       const acc = data.accounts.find(a => a.id === accountId);
-      const invested = HAS_PNL.has(acc?.type) && recordInvested[accountId] !== "" ? parseFloat((recordInvested[accountId] || "").replace(/\s/g, "").replace(",", ".")) : undefined;
+      let invested;
+      if (HAS_PNL.has(acc?.type) && recordInvested[accountId] !== "") {
+        const delta = parseFloat((recordInvested[accountId] || "").replace(/\s/g, "").replace(",", "."));
+        if (!isNaN(delta)) {
+          const prev = getSnapshot(accountId, prevMonth(recordMonth));
+          invested = (prev?.invested ?? 0) + delta;
+        }
+      }
       const idx = next.snapshots.findIndex(s => s.accountId === accountId && s.month === recordMonth);
       const snap = { balance, ...(invested != null && !isNaN(invested) ? { invested } : {}) };
       if (idx >= 0) next.snapshots[idx] = { ...next.snapshots[idx], ...snap };
@@ -738,12 +751,19 @@ export default function App() {
           <div className="fade-in" style={{ background: "#13151f", border: "1px solid #2a2d38", borderRadius: 16, padding: 28, width: "100%", maxWidth: 420, maxHeight: "90vh", overflowY: "auto" }}>
             <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, fontWeight: 700, marginBottom: 14 }}>Записать состояние</div>
             <input type="month" className="inp" value={recordMonth} onChange={e => {
-              setRecordMonth(e.target.value);
+              const mn = e.target.value;
+              setRecordMonth(mn);
               const vals = {}, inv = {};
               activeAccounts.forEach(a => {
-                const snap = getSnapshot(a.id, e.target.value) || getSnapshot(a.id, prevMonth(e.target.value));
+                const curSnap = getSnapshot(a.id, mn);
+                const snap = curSnap || getSnapshot(a.id, prevMonth(mn));
                 vals[a.id] = snap ? String(snap.balance) : "";
-                if (HAS_PNL.has(a.type)) inv[a.id] = snap?.invested != null ? String(snap.invested) : "";
+                if (HAS_PNL.has(a.type)) {
+                  if (curSnap?.invested != null) {
+                    const prev = getSnapshot(a.id, prevMonth(mn));
+                    inv[a.id] = String(curSnap.invested - (prev?.invested ?? 0));
+                  } else inv[a.id] = "0";
+                }
               });
               setRecordValues(vals);
               setRecordInvested(inv);
@@ -761,7 +781,7 @@ export default function App() {
                         <input className="inp" type="number" step="any" placeholder="0" value={recordValues[acc.id] ?? ""} onChange={e => setRecordValues({ ...recordValues, [acc.id]: e.target.value })} />
                       </div>
                       <div style={{ flex: 1 }}>
-                        <div style={{ fontSize: 10, color: "#4b5563", marginBottom: 4 }}>Внесено</div>
+                        <div style={{ fontSize: 10, color: "#4b5563", marginBottom: 4 }}>Внесено за месяц</div>
                         <input className="inp" type="number" step="any" placeholder="0" value={recordInvested[acc.id] ?? ""} onChange={e => setRecordInvested({ ...recordInvested, [acc.id]: e.target.value })} />
                       </div>
                     </div>
