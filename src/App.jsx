@@ -21,6 +21,7 @@ import { readFromSheets, writeToSheets, createSpreadsheet, SheetsError } from ".
 const LS_KEY = "money-tracker-v2";
 const LS_KEY_V1 = "money-tracker-v1";
 const LS_GSHEET = "money-tracker-gsheet";
+const LS_TOKEN = "money-tracker-token";
 const LS_CLIENT = "money-tracker-client-id";
 const LS_RATES = "money-tracker-rates-v2";
 const SCOPES = "https://www.googleapis.com/auth/spreadsheets";
@@ -36,6 +37,30 @@ const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random(
 const nowIso = () => new Date().toISOString();
 const typeIcon = (type) => ACCOUNT_TYPES.find((t) => t.id === type)?.icon || "🗂️";
 const typeLabel = (type) => ACCOUNT_TYPES.find((t) => t.id === type)?.label || type;
+
+// A Google access token lives about an hour. Keeping it (with its expiry)
+// means a reload inside that hour does not ask for a new sign-in, and when it
+// has expired the token client is asked for a fresh one SILENTLY — `prompt: ""`
+// never opens a window, it just fails if consent or the Google session is gone,
+// and then the red button is there. Before this, every single reload started
+// signed out, because the token only ever lived in React state.
+const readStoredToken = () => {
+  try {
+    const t = JSON.parse(localStorage.getItem(LS_TOKEN));
+    // 60s of slack so a token cannot expire mid-request.
+    if (t?.token && t.expiresAt && Date.parse(t.expiresAt) - Date.now() > 60_000) return t.token;
+  } catch {}
+  return null;
+};
+const storeToken = (token, expiresInSec) => {
+  try {
+    if (!token) { localStorage.removeItem(LS_TOKEN); return; }
+    const secs = Number(expiresInSec) > 0 ? Number(expiresInSec) : 3600;
+    localStorage.setItem(LS_TOKEN, JSON.stringify({
+      token, expiresAt: new Date(Date.now() + secs * 1000).toISOString(),
+    }));
+  } catch {}
+};
 
 const loadLocal = () => {
   try {
@@ -73,6 +98,7 @@ export default function App() {
   const [selectedMonth, setSelectedMonth] = useState(null);
   const [notice, setNotice] = useState(null);
   const [estimating, setEstimating] = useState(false);
+  const silentRef = useRef(false);
 
   // ── rates ──────────────────────────────────────────────────────────────────
   const [rates, setRates] = useState(() => {
@@ -130,12 +156,13 @@ export default function App() {
   const [clientId, setClientId] = useState(() => localStorage.getItem(LS_CLIENT) || "");
   const [clientIdDraft, setClientIdDraft] = useState("");
   const [sheetIdDraft, setSheetIdDraft] = useState("");
-  const [token, setToken] = useState(null);
+  const [token, setToken] = useState(readStoredToken);
   const [sheetId, setSheetId] = useState(() => localStorage.getItem(LS_GSHEET) || "");
   const [syncStatus, setSyncStatus] = useState("idle");
   const syncStatusRef = useRef("idle");
   const [syncMsg, setSyncMsg] = useState("");
   const tokenClientRef = useRef(null);
+  const silentAuthRef = useRef(null);
   const sheetIdRef = useRef(sheetId);
   const tokenRef = useRef(token);
   const revisionRef = useRef(null);
@@ -159,8 +186,12 @@ export default function App() {
       // v1 never noticed the ~1h token expiry, so every later edit was written
       // to nothing and lost on the next reload.
       setToken(null);
+      tokenRef.current = null;
+      storeToken(null);
       setSyncStatus("error");
       setSyncMsg("Сессия Google истекла — войдите снова");
+      // The token may simply have aged out; try to renew it without any UI.
+      silentAuthRef.current?.();
     } else {
       setSyncStatus("error");
       setSyncMsg("Ошибка: " + (e?.message || String(e)));
@@ -270,15 +301,33 @@ export default function App() {
         client_id: clientId,
         scope: SCOPES,
         callback: async (resp) => {
-          if (resp.error) { setSyncStatus("error"); setSyncMsg("Ошибка авторизации"); return; }
+          if (resp.error) {
+            // A silent attempt failing is normal and must not shout at the user;
+            // the red "вход не выполнен" state already says what is going on.
+            if (!silentRef.current) { setSyncStatus("error"); setSyncMsg("Ошибка авторизации"); }
+            silentRef.current = false;
+            return;
+          }
+          silentRef.current = false;
           setToken(resp.access_token);
           tokenRef.current = resp.access_token;
+          storeToken(resp.access_token, resp.expires_in);
           // v1 read sheetId from the closure captured when the client was
           // created, so a sheet pasted afterwards was ignored and a duplicate
           // spreadsheet got created.
           await syncNow(resp.access_token, sheetIdRef.current);
         },
       });
+      // Renew without any prompt. Works whenever consent was already granted
+      // and the browser still has a Google session.
+      silentAuthRef.current = () => {
+        if (!tokenClientRef.current) return;
+        silentRef.current = true;
+        try { tokenClientRef.current.requestAccessToken({ prompt: "" }); }
+        catch { silentRef.current = false; }
+      };
+      if (!tokenRef.current) silentAuthRef.current();
+      else if (sheetIdRef.current) syncNow(tokenRef.current, sheetIdRef.current);
     };
     if (window.google) { load(); return; }
     let el = document.getElementById("gsi-script");
@@ -291,7 +340,10 @@ export default function App() {
     return () => el.removeEventListener("load", load);
   }, [clientId, syncNow]);
 
-  const requestToken = () => tokenClientRef.current?.requestAccessToken();
+  const requestToken = () => {
+    silentRef.current = false;
+    tokenClientRef.current?.requestAccessToken();
+  };
 
   const save = useCallback((next) => {
     setData(next); dataRef.current = next; persistLocal(next);
@@ -601,7 +653,8 @@ export default function App() {
   };
 
   const disconnect = () => {
-    setToken(null); setSheetId(""); setClientId("");
+    setToken(null); tokenRef.current = null; storeToken(null);
+    setSheetId(""); setClientId("");
     localStorage.removeItem(LS_GSHEET); localStorage.removeItem(LS_CLIENT);
     revisionRef.current = null; extentRef.current = null;
     setSyncStatus("idle"); setSyncMsg("");
@@ -700,7 +753,7 @@ export default function App() {
           )}
 
           <div style={{ display: "flex", gap: 2, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            {[["dashboard", "Обзор"], ["structure", "Структура"], ["returns", "Доходность"], ["accounts", "Счета"], ["history", "История"]].map(([id, label]) => (
+            {[["dashboard", "Обзор"], ["structure", "Активы"], ["returns", "Доходность"], ["accounts", "Счета"], ["history", "История"]].map(([id, label]) => (
               <button key={id} className="tab-btn" onClick={() => setTab(id)}
                 style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, fontFamily: "inherit", color: tab === id ? "#6ee7b7" : "#6b7280", background: tab === id ? "#1a2820" : "none" }}>{label}</button>
             ))}

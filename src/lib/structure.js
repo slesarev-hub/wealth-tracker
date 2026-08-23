@@ -3,11 +3,15 @@
 //
 // Two rules drive the design, both from the visualisation guidance:
 //
-//  * At most FIVE coloured categories plus a neutral "остальное". The
-//    categorical palette's documented slot order clears every separation check
-//    for five adjacent pairs AND for the ring's wrap-around pair (magenta ->
-//    blue). A sixth hue (violet) fails that wrap badly: ΔE 1.9 for protanopia
-//    and 9.8 for normal vision, i.e. two touching slices nobody can tell apart.
+//  * At most THREE coloured categories plus a neutral "остальное". A ring
+//    cannot promise which hues end up touching: a category missing from the
+//    displayed month closes the gap, so ANY two slots can become neighbours.
+//    That makes the all-pairs check the binding one, and it fails from four
+//    hues up (orange vs yellow, ΔE 10.6 for normal vision; magenta vs green,
+//    ΔE 1.6 for deuteranopia). Three hues plus the neutral pass it: worst pair
+//    ΔE 9.4 under deuteranopia, 16.0 for normal vision, on surface #111320.
+//    The ranked list below each ring carries every category by name, so nothing
+//    is lost by folding the tail — only the glance is simplified.
 //
 //  * Colour follows the ENTITY, never its rank. Slots are assigned from each
 //    category's total across ALL months, so switching the displayed month never
@@ -19,7 +23,7 @@
 import { ACCOUNT_TYPES, balSign, roundAmount } from "./model.js";
 import { accountsInMonth, convert, monthsOf } from "./calc.js";
 
-export const MAX_SLICES = 5;
+export const MAX_SLICES = 3;
 export const OTHER_KEY = "__other__";
 
 const typeLabel = (t) => ACCOUNT_TYPES.find((x) => x.id === t)?.label || t;
@@ -38,7 +42,10 @@ const sumsFor = (data, month, toCurrency, table, idx) => {
   for (const { acc, snap } of accountsInMonth(data, month, idx)) {
     const v = convert(snap.balance, snap.currency, toCurrency, table);
     if (!Number.isFinite(v)) { unconverted.push(acc); continue; }
-    if (balSign(acc) < 0) { liabilities += v; continue; }
+    // A negative balance on an asset account is a liability in everything but
+    // its label. Counting it as a slice would produce a negative share and push
+    // the others above 100%.
+    if (balSign(acc) < 0 || v < 0) { liabilities += Math.abs(v); continue; }
     assets += v;
 
     const cur = byCurrency.get(snap.currency) || { native: 0, value: 0 };
@@ -81,14 +88,25 @@ const toSlices = (entries, order, label, total) => {
     label: label(e.key),
     share: total > 0 ? e.value / total : 0,
   }));
-  if (rest.length) {
+  if (rest.length === 1) {
+    // One leftover keeps its own identity — and its own fields, so a currency
+    // folded out of the ring still shows how much of it there is.
+    const only = rest[0];
     slices.push({
-      key: OTHER_KEY,
-      slot: null,
-      label: rest.length === 1 ? label(rest[0].key) : `Остальное · ${rest.length}`,
-      value: roundAmount(rest.reduce((s, e) => s + e.value, 0)),
-      share: total > 0 ? rest.reduce((s, e) => s + e.value, 0) / total : 0,
-      members: rest.map((e) => ({ ...e, label: label(e.key), share: total > 0 ? e.value / total : 0 })),
+      ...only, key: OTHER_KEY, ofKey: only.key, slot: null,
+      label: label(only.key),
+      share: total > 0 ? only.value / total : 0,
+    });
+  } else if (rest.length > 1) {
+    const sum = rest.reduce((s, e) => s + e.value, 0);
+    slices.push({
+      key: OTHER_KEY, slot: null,
+      label: `Остальное · ${rest.length}`,
+      value: roundAmount(sum),
+      share: total > 0 ? sum / total : 0,
+      members: rest
+        .map((e) => ({ ...e, label: label(e.key), share: total > 0 ? e.value / total : 0 }))
+        .sort((a, b) => b.value - a.value),
     });
   }
   return slices;
@@ -96,7 +114,17 @@ const toSlices = (entries, order, label, total) => {
 
 export const structureFor = (data, month, toCurrency, ratesOf, idx) => {
   const s = sumsFor(data, month, toCurrency, ratesOf(month).table, idx);
-  const nameOf = (id) => data.accounts.find((a) => a.id === id)?.name || id;
+  // 20 accounts share 13 names here, so a bare name would put "Газпромбанк"
+  // both in the ring and inside "Остальное", each showing a different amount.
+  const counts = new Map();
+  for (const a of data.accounts) counts.set(a.name, (counts.get(a.name) || 0) + 1);
+  const nameOf = (id) => {
+    const a = data.accounts.find((x) => x.id === id);
+    if (!a) return id;
+    if ((counts.get(a.name) || 0) < 2) return a.name;
+    const t = ACCOUNT_TYPES.find((x) => x.id === a.type)?.label || a.type;
+    return `${a.name} · ${t}${a.currency === toCurrency ? "" : " " + a.currency}`;
+  };
   const iconOf = (id) => typeIcon(data.accounts.find((a) => a.id === id)?.type);
 
   const curOrder = stableOrder(data, toCurrency, ratesOf, idx,
@@ -124,5 +152,14 @@ export const structureFor = (data, month, toCurrency, ratesOf, idx) => {
       [...s.byAccount.entries()].map(([key, value]) => ({ key, value: roundAmount(value), icon: iconOf(key) })),
       accOrder, nameOf, s.assets
     ),
+    // Ungrouped and ranked. Twenty accounts is not a part-to-whole-at-a-glance
+    // set — a ring capped at three hues would be 58% "остальное" — so this is
+    // rendered as ranked bars, where the count carries no colour constraint.
+    accountRows: [...s.byAccount.entries()]
+      .map(([key, value]) => ({
+        key, value: roundAmount(value), icon: iconOf(key), label: nameOf(key),
+        share: s.assets > 0 ? value / s.assets : 0,
+      }))
+      .sort((a, b) => b.value - a.value),
   };
 };

@@ -54,17 +54,56 @@ test("the ring never needs a sixth hue: the tail folds into one neutral slice", 
   assert.equal(s.byAccount.length, MAX_SLICES + 1);
   const other = s.byAccount[s.byAccount.length - 1];
   assert.equal(other.key, OTHER_KEY);
-  assert.equal(other.members.length, 4);
+  assert.equal(other.members.length, 9 - MAX_SLICES);
   assert.ok(Math.abs(other.value - other.members.reduce((x, m) => x + m.value, 0)) < 1e-9);
   assert.ok(s.byAccount.slice(0, MAX_SLICES).every((x, i) => x.slot === i), "slots are the documented order");
   assert.equal(other.slot, null, "the tail is not a hue");
 });
 
-test("a single leftover keeps its own name instead of becoming 'Остальное'", () => {
-  const accounts = Array.from({ length: 6 }, (_, i) => acc("a" + i, { name: "Счёт " + i }));
+test("a single leftover keeps its own name and its own fields", () => {
+  const n = MAX_SLICES + 1;
+  const accounts = Array.from({ length: n }, (_, i) => acc("a" + i, { name: "Счёт " + i }));
   const data = build(accounts, accounts.map((a, i) => snap("s" + i, a.id, "2026-01", 100 - i)));
   const s = structureFor(data, "2026-01", "RUB", makeRatesOf(data, R), snapshotIndex(data));
-  assert.equal(s.byAccount[MAX_SLICES].label, "Счёт 5");
+  const last = s.byAccount[MAX_SLICES];
+  assert.equal(last.label, "Счёт " + (n - 1));
+  assert.equal(last.members, undefined, "one leftover is not a group");
+  assert.ok(last.icon, "and it keeps the fields a normal slice has");
+});
+
+test("a currency folded out of the ring keeps its native amount", () => {
+  const cur = ["RUB", "USD", "EUR", "GBP"];
+  const accounts = cur.map((c, i) => acc("a" + i, { currency: c }));
+  const data = build(accounts, accounts.map((a, i) => snap("s" + i, a.id, "2026-01", 1000 - i * 100, { currency: cur[i] })));
+  const s = structureFor(data, "2026-01", "RUB", makeRatesOf(data, { rates: { USD: 1, RUB: 80, EUR: 0.9, GBP: 0.8 } }), snapshotIndex(data));
+  const folded = s.byCurrency[MAX_SLICES];
+  assert.equal(folded.members, undefined);
+  assert.equal(typeof folded.native, "number", "the sixth currency must still show how much of it there is");
+});
+
+test("accounts that share a name are told apart", () => {
+  const data = build(
+    [acc("a", { name: "Газпромбанк", type: "deposit" }), acc("b", { name: "Газпромбанк", type: "investment" }), acc("c", { name: "Тбанк" })],
+    [snap("s1", "a", "2026-01", 300), snap("s2", "b", "2026-01", 200), snap("s3", "c", "2026-01", 100)]
+  );
+  const s = structureFor(data, "2026-01", "RUB", makeRatesOf(data, R), snapshotIndex(data));
+  const labels = s.byAccount.map((x) => x.label);
+  assert.equal(new Set(labels).size, labels.length, "two rows reading «Газпромбанк» with different amounts is unreadable");
+  assert.ok(labels.some((l) => l.includes("Вклад")));
+  assert.equal(labels.filter((l) => l === "Тбанк").length, 1, "a unique name is left alone");
+});
+
+test("a negative balance on an asset account does not create a share above 100%", () => {
+  const data = build(
+    [acc("ok"), acc("neg")],
+    [snap("s1", "ok", "2026-01", 1000), snap("s2", "neg", "2026-01", -400)]
+  );
+  const s = structureFor(data, "2026-01", "RUB", makeRatesOf(data, R), snapshotIndex(data));
+  assert.equal(s.assets, 1000);
+  assert.equal(s.liabilities, 400);
+  assert.equal(s.net, 600);
+  assert.ok(s.byAccount.every((x) => x.share > 0 && x.share <= 1));
+  assert.ok(Math.abs(s.byAccount.reduce((x, c) => x + c.share, 0) - 1) < 1e-9);
 });
 
 test("changing the month never repaints a slice", () => {

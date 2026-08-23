@@ -5,36 +5,87 @@ import { BASE_CURRENCY } from "./lib/model.js";
 import { CURRENCY_SYMBOLS, fmtShort, fmtBalance, monthLabel } from "./lib/format.js";
 import { structureFor, OTHER_KEY } from "./lib/structure.js";
 
-// The documented categorical slot order, stepped for a dark surface. Five slots
-// only: with the app's surface (#111320) all five adjacent pairs and the ring's
-// wrap-around pair pass every separation check, while a sixth hue (violet)
-// collides with slot 1 — ΔE 1.9 under protanopia, 9.8 under normal vision.
-// Anything past five folds into OTHER, which is deliberately not a hue.
-const SLOT = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181"];
-const OTHER = "#5b6070";
+// Three hues plus one neutral. A ring cannot promise which hues end up
+// touching — a category absent from the displayed month closes the gap and
+// re-seats its neighbours — so the all-pairs check is the binding one, not the
+// adjacent one. On this surface (#111320) these four clear it: worst pair ΔE
+// 9.0 under protanopia, 15.9 for normal vision, every swatch above 3:1 against
+// the surface. A fourth hue does not: orange vs yellow is 10.6 for normal
+// vision, magenta vs green 1.6 under deuteranopia. The neutral is deliberately
+// warm — a blue-grey scored only 14.4 against slot 1 — and deliberately
+// low-chroma: it is the "everything else" colour, not a category.
+const SLOT = ["#3987e5", "#d95926", "#199e70"];
+const OTHER = "#6e6a63";
 const SURFACE = "#111320";
+const INK = "#e8eaf0", INK_2 = "#9ca3af", INK_3 = "#6b7280";
 
 const colorOf = (slice) => (slice.key === OTHER_KEY ? OTHER : SLOT[slice.slot] || OTHER);
 const pct = (x) => (x * 100).toFixed(x >= 0.1 ? 0 : 1) + "%";
 
 // NB: never name a prop `valueOf`/`toString` — destructuring an absent one
 // picks the method up off Object.prototype instead of yielding undefined.
-const Donut = ({ title, slices, total, note, secondary }) => {
-  // Hover is linked by KEY, not by index: the ring and the list are in
-  // different orders on purpose.
+// Ranked bars for a set too large to be a ring. No colour identity is needed —
+// the bar length is the encoding and the name is right there — so the series
+// cap that constrains the donut does not apply here at all.
+const Bars = ({ title, rows, note }) => {
+  if (!rows.length) return null;
+  const max = rows[0].share || 1;
+  return (
+    <div className="card" style={{ padding: "18px 20px" }}>
+      <div className="lbl" style={{ marginBottom: note ? 4 : 12 }}>{title}</div>
+      {note && <div style={{ fontSize: 11, color: INK_3, marginBottom: 10 }}>{note}</div>}
+      {rows.map((s) => (
+        <div key={s.key} style={{ position: "relative", display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6 }}>
+          <div style={{
+            position: "absolute", inset: "0 auto 0 0", width: `${Math.max((s.share / max) * 100, 0.6)}%`,
+            background: "#1d3a4f", borderRadius: 6, pointerEvents: "none",
+          }} />
+          <span style={{ position: "relative", fontSize: 12, color: INK_2, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.label}>
+            {s.icon ? s.icon + " " : ""}{s.label}
+          </span>
+          <span style={{ position: "relative", fontSize: 12, color: INK, minWidth: 56, textAlign: "right" }}>{fmtShort(s.value)} ₽</span>
+          <span style={{ position: "relative", fontSize: 11, color: INK_2, minWidth: 36, textAlign: "right" }}>{pct(s.share)}</span>
+        </div>
+      ))}
+    </div>
+  );
+};
+
+const Donut = ({ title, slices, total, secondary }) => {
   const [active, setActive] = useState(null);
+  const [open, setOpen] = useState(false);
+
   const rows = slices.filter((s) => s.value > 0);
-  // The ring keeps the palette's declared order — sorting it by size would let
-  // any two hues end up touching, and the pairs that are then possible fail the
-  // separation checks (orange vs yellow ΔE 10.6 normal, magenta vs green 1.6
-  // deutan). The list is free to rank, since its identity is the name.
+  // The ring keeps the palette's declared order; the list ranks by value. Hover
+  // links them by KEY, and a key that is no longer on screen highlights nothing
+  // — otherwise a stale key would leave the whole ring dimmed with nothing lit.
+  const lit = active !== null && rows.some((r) => r.key === active) ? active : null;
   const ranked = [...rows].sort((a, b) => b.value - a.value);
   if (!rows.length) return null;
 
+  const Row = ({ s, inset }) => (
+    <div
+      onMouseEnter={() => setActive(s.key)} onMouseLeave={() => setActive(null)}
+      style={{ position: "relative", display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, marginLeft: inset ? 18 : 0 }}>
+      {/* A share bar behind each row. The list is the readable chart and the
+          ring is the glance, so nothing is lost when the tail is folded. */}
+      <div style={{
+        position: "absolute", inset: "0 auto 0 0", width: `${Math.max(s.share * 100, 0.6)}%`,
+        background: lit === s.key ? "#242938" : "#191c26", borderRadius: 6, pointerEvents: "none",
+      }} />
+      <span style={{ position: "relative", width: 9, height: 9, borderRadius: 2, background: inset ? "#3a3f4d" : colorOf(s), flexShrink: 0 }} />
+      <span style={{ position: "relative", fontSize: 12, color: INK_2, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.label}>
+        {s.icon ? s.icon + " " : ""}{s.label}
+      </span>
+      {secondary && secondary(s) && <span style={{ position: "relative", fontSize: 11, color: INK_3 }}>{secondary(s)}</span>}
+      <span style={{ position: "relative", fontSize: 12, color: INK, minWidth: 56, textAlign: "right" }}>{fmtShort(s.value)} ₽</span>
+      <span style={{ position: "relative", fontSize: 11, color: INK_2, minWidth: 36, textAlign: "right" }}>{pct(s.share)}</span>
+    </div>
+  );
+
   return (
     <div className="card" style={{ padding: "18px 20px" }}>
-      <div className="lbl" style={{ marginBottom: 4 }}>{title}</div>
-      {note && <div style={{ fontSize: 11, color: "#4b5563", marginBottom: 10 }}>{note}</div>}
+      <div className="lbl" style={{ marginBottom: 12 }}>{title}</div>
 
       <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
         <div style={{ position: "relative", width: 168, height: 168, flexShrink: 0 }}>
@@ -43,46 +94,44 @@ const Donut = ({ title, slices, total, note, secondary }) => {
               <Pie
                 data={rows} dataKey="value" nameKey="label"
                 innerRadius={54} outerRadius={80}
-                paddingAngle={2} startAngle={90} endAngle={-270}
+                // minAngle keeps a sub-percent slice from being erased by the
+                // gap and the surface stroke while the list still reports it.
+                paddingAngle={1} minAngle={3} startAngle={90} endAngle={-270}
                 stroke={SURFACE} strokeWidth={2} isAnimationActive={false}
                 onMouseEnter={(e) => setActive(e?.payload?.key ?? null)} onMouseLeave={() => setActive(null)}
               >
                 {rows.map((s) => (
-                  <Cell key={s.key} fill={colorOf(s)} opacity={active === null || active === s.key ? 1 : 0.45} />
+                  <Cell key={s.key} fill={colorOf(s)} opacity={lit === null || lit === s.key ? 1 : 0.4} />
                 ))}
               </Pie>
               <Tooltip
                 contentStyle={{ background: "#1a1d26", border: "1px solid #2a2d38", borderRadius: 8, fontFamily: "DM Mono", fontSize: 12 }}
-                itemStyle={{ color: "#e8eaf0" }} labelStyle={{ display: "none" }}
+                itemStyle={{ color: INK }} labelStyle={{ display: "none" }}
                 formatter={(v, _n, p) => [`${fmtShort(v)} ₽ · ${pct(p.payload.share)}`, p.payload.label]}
               />
             </PieChart>
           </ResponsiveContainer>
-          {/* The hole carries the total, so the ring answers "of what?" itself. */}
           <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
-            <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 19, fontWeight: 800, color: "#e8eaf0" }}>{fmtShort(total)}</div>
-            <div style={{ fontSize: 11, color: "#4b5563" }}>₽</div>
+            <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 19, fontWeight: 800, color: INK }}>{fmtShort(total)}</div>
+            <div style={{ fontSize: 11, color: INK_3 }}>₽</div>
           </div>
         </div>
 
-        {/* Doubles as the table view: every slice named, with its exact number,
-            so identity never rests on colour alone. */}
+        {/* Every category by name and number — the table view the ring leans on,
+            and the only thing that works without a mouse. */}
         <div style={{ flex: 1, minWidth: 190 }}>
           {ranked.map((s) => (
-            <div key={s.key}
-              onMouseEnter={() => setActive(s.key)} onMouseLeave={() => setActive(null)}
-              style={{
-                display: "flex", alignItems: "center", gap: 8, padding: "5px 6px", borderRadius: 6,
-                background: active === s.key ? "#1a1d26" : "transparent", transition: "background 0.1s",
-              }}>
-              <span style={{ width: 9, height: 9, borderRadius: 2, background: colorOf(s), flexShrink: 0 }} />
-              <span style={{ fontSize: 12, color: "#9ca3af", flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
-                title={s.members ? s.members.map((m) => `${m.label}: ${fmtShort(m.value)} ₽`).join("\n") : undefined}>
-                {s.icon ? s.icon + " " : ""}{s.label}
-              </span>
-              {secondary && <span style={{ fontSize: 11, color: "#4b5563" }}>{secondary(s)}</span>}
-              <span style={{ fontSize: 12, color: "#e8eaf0", minWidth: 52, textAlign: "right" }}>{fmtShort(s.value)} ₽</span>
-              <span style={{ fontSize: 11, color: "#6b7280", minWidth: 34, textAlign: "right" }}>{pct(s.share)}</span>
+            <div key={s.key}>
+              <Row s={s} />
+              {s.members && (
+                <>
+                  <button className="tab-btn" onClick={() => setOpen(!open)}
+                    style={{ fontSize: 11, color: INK_2, padding: "2px 8px", marginLeft: 18, textDecoration: "underline dotted" }}>
+                    {open ? "свернуть" : `показать ${s.members.length}`}
+                  </button>
+                  {open && s.members.map((mm) => <Row key={mm.key} s={mm} inset />)}
+                </>
+              )}
             </div>
           ))}
         </div>
@@ -92,8 +141,10 @@ const Donut = ({ title, slices, total, note, secondary }) => {
 };
 
 export default function StructureTab({ data, months, idx, ratesOf }) {
-  const [month, setMonth] = useState(() => months[months.length - 1] || null);
-  const m = months.includes(month) ? month : months[months.length - 1];
+  const [month, setMonth] = useState(null);
+  // Derived, never stale: a remembered month that no longer exists falls back
+  // to the latest instead of silently reasserting itself if it ever returns.
+  const m = month && months.includes(month) ? month : months[months.length - 1];
 
   const s = useMemo(
     () => (m ? structureFor(data, m, BASE_CURRENCY, ratesOf, idx) : null),
@@ -104,38 +155,44 @@ export default function StructureTab({ data, months, idx, ratesOf }) {
     return (
       <div className="fade-in card" style={{ border: "1px dashed #2a2d38", padding: "48px 24px", textAlign: "center" }}>
         <div style={{ fontSize: 32, marginBottom: 12 }}>🥧</div>
-        <div style={{ fontSize: 14, color: "#6b7280" }}>Нет записей — сначала запишите месяц.</div>
+        <div style={{ fontSize: 14, color: INK_3 }}>Нет записей — сначала запишите месяц.</div>
       </div>
     );
   }
 
   return (
     <div className="fade-in">
-      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 18, flexWrap: "wrap" }}>
-        <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 20, fontWeight: 700, flex: 1 }}>Структура</div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
+        <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 20, fontWeight: 700, flex: 1 }}>Активы · структура</div>
         <select className="sel" style={{ width: "auto", padding: "7px 12px", fontSize: 12 }}
           value={m} onChange={(e) => setMonth(e.target.value)}>
           {[...months].reverse().map((x) => <option key={x} value={x}>{monthLabel(x)}</option>)}
         </select>
       </div>
 
-      <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 18, alignItems: "baseline" }}>
+      <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 10, alignItems: "baseline" }}>
         <div>
           <div className="lbl" style={{ marginBottom: 4 }}>Активы</div>
-          <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 26, fontWeight: 800 }}>{fmtShort(s.assets)} <span style={{ fontSize: 13, color: "#6b7280" }}>₽</span></div>
+          <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 26, fontWeight: 800 }}>{fmtShort(s.assets)} <span style={{ fontSize: 13, color: INK_3 }}>₽</span></div>
         </div>
         {s.liabilities > 0 && (
-          <div>
-            <div className="lbl" style={{ marginBottom: 4 }}>Долги</div>
-            <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 20, fontWeight: 700, color: "#f87171" }}>−{fmtShort(s.liabilities)} <span style={{ fontSize: 12, color: "#6b7280" }}>₽</span></div>
-          </div>
+          <>
+            <div>
+              <div className="lbl" style={{ marginBottom: 4 }}>Долги</div>
+              <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 20, fontWeight: 700, color: "#f87171" }}>−{fmtShort(s.liabilities)} <span style={{ fontSize: 12, color: INK_3 }}>₽</span></div>
+            </div>
+            <div>
+              <div className="lbl" style={{ marginBottom: 4 }}>Чистый капитал</div>
+              <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 20, fontWeight: 700 }}>{fmtShort(s.net)} <span style={{ fontSize: 12, color: INK_3 }}>₽</span></div>
+            </div>
+          </>
         )}
-        {s.liabilities > 0 && (
-          <div>
-            <div className="lbl" style={{ marginBottom: 4 }}>Чистый капитал</div>
-            <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 20, fontWeight: 700 }}>{fmtShort(s.net)} <span style={{ fontSize: 12, color: "#6b7280" }}>₽</span></div>
-          </div>
-        )}
+      </div>
+
+      {/* Said once, for all three rings, instead of under only one of them. */}
+      <div style={{ fontSize: 11, color: INK_3, marginBottom: 16, lineHeight: 1.6 }}>
+        Все три разбиения — доли активов{s.liabilities > 0 ? "; долги в них не входят, доля от целого не бывает отрицательной" : ""}.
+        В кольцах цветом выделены три крупнейшие категории, остальные собраны в одну долю — её можно раскрыть в списке.
       </div>
 
       {s.unconverted.length > 0 && (
@@ -146,12 +203,14 @@ export default function StructureTab({ data, months, idx, ratesOf }) {
 
       <div style={{ display: "grid", gap: 14 }}>
         <Donut title="По валютам" slices={s.byCurrency} total={s.assets}
-          note="Доли активов. Долги показаны отдельно — отрицательная доля не бывает."
-          secondary={(x) => (x.native !== undefined && x.key !== BASE_CURRENCY
-            ? `${fmtBalance(x.native, x.key)} ${CURRENCY_SYMBOLS[x.key] || x.key}` : null)} />
+          secondary={(x) => {
+            const c = x.ofKey || x.key;
+            return x.native !== undefined && c !== BASE_CURRENCY
+              ? `${fmtBalance(x.native, c)} ${CURRENCY_SYMBOLS[c] || c}` : null;
+          }} />
         <Donut title="По инструментам" slices={s.byType} total={s.assets} />
-        <Donut title="По счетам" slices={s.byAccount} total={s.assets}
-          note="Пять крупнейших за всю историю; остальные сведены в одну долю — наведите, чтобы увидеть состав." />
+        <Bars title="По счетам" rows={s.accountRows}
+          note="Все счета по величине. Кольцо здесь не годится: двадцать долей не читаются с одного взгляда." />
       </div>
     </div>
   );
