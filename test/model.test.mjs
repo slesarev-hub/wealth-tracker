@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import {
   parseNum, prevMonth, nextMonth, isMonth, normalize, migrateV1, ensureV2,
   mergeData, detectVersion, purgeTombstones, isOpenAt, emptyData, live, SCHEMA_VERSION, MIGRATION_STAMP,
+  estimateCoinBasis, coinBasisPricePairs, addMonths,
 } from "../src/lib/model.js";
 import {
   makeRatesOf, convert, snapshotIndex, monthsOf, effectiveSnapshot, monthTotal,
@@ -834,4 +835,100 @@ test("migrated records lose ties to any later real edit", () => {
   const edited = build([acc("a")], [snap("s", "a", "2026-01", 999, { updatedAt: "2026-08-01T00:00:00Z" })]);
   assert.equal(mergeData(migrated, edited, T).snapshots[0].balance, 999);
   assert.equal(mergeData(edited, migrated, T).snapshots[0].balance, 999);
+});
+
+// ── estimating a cost basis that was recorded as a coin quantity ────────────
+
+test("a coin quantity is priced at the assumed purchase month, not today", () => {
+  const data = build(
+    [acc("btc", { type: "crypto", currency: "BTC" })],
+    [
+      snap("s1", "btc", "2026-03", 0.01, { currency: "BTC", contributed: 0.01, contribCurrency: "BTC" }),
+      snap("s2", "btc", "2026-04", 0.01, { currency: "BTC", contributed: 0, contribCurrency: "BTC" }),
+    ]
+  );
+  // only the first month needs a price: the April contribution is zero
+  assert.deepEqual(coinBasisPricePairs(data, "2025-09"), [{ month: "2025-09", currency: "BTC" }]);
+  const priceRub = (m) => (m === "2025-09" ? 4_000_000 : 6_000_000);
+  const { data: out, changed, missing } = estimateCoinBasis(data, { assumedMonth: "2025-09", priceRub, nowIso: T });
+  assert.equal(missing.length, 0);
+  assert.equal(changed.length, 1);
+  const first = out.snapshots.find((s) => s.month === "2026-03");
+  assert.equal(first.contributed, 40000);          // 0.01 BTC at the assumed month
+  assert.equal(first.contribCurrency, "RUB");
+  assert.equal(first.contribEstimated, true);
+
+  // and the P&L stops being structurally zero
+  const idx = snapshotIndex(out);
+  const ratesOf = makeRatesOf(out, { rates: { USD: 1, RUB: 80, BTC: 1 / 100000 } });
+  const p = pnlFor(out, out.accounts[0], "2026-04", idx, ratesOf);
+  assert.equal(p.currency, "RUB");
+  assert.equal(p.meaningful, true);
+  assert.equal(p.estimated, true, "it must never be mistaken for a figure the user typed");
+  assert.equal(p.exact, false);
+  assert.equal(Math.round(p.value), 80000);        // 0.01 BTC = 1000 USD = 80000 ₽
+  assert.equal(Math.round(p.pnl), 40000);
+});
+
+test("a missing historical price leaves the contribution untouched", () => {
+  const data = build(
+    [acc("btc", { type: "crypto", currency: "BTC" })],
+    [snap("s1", "btc", "2026-03", 0.01, { currency: "BTC", contributed: 0.01, contribCurrency: "BTC" })]
+  );
+  const { data: out, missing, changed } = estimateCoinBasis(data, { assumedMonth: "2025-09", priceRub: () => null, nowIso: T });
+  assert.equal(changed.length, 0);
+  assert.equal(missing.length, 1);
+  assert.equal(out.snapshots[0].contribCurrency, "BTC", "nothing is invented when the price is unknown");
+});
+
+test("estimating leaves a basis the user typed in money alone", () => {
+  const data = build(
+    [acc("inv", { type: "investment" })],
+    [snap("s1", "inv", "2026-03", 100, { contributed: 90, contribCurrency: "RUB" })]
+  );
+  const { data: out, changed } = estimateCoinBasis(data, { assumedMonth: "2025-09", priceRub: () => 1e6, nowIso: T });
+  assert.equal(changed.length, 0);
+  assert.equal(out.snapshots[0].contributed, 90);
+  assert.equal(out.snapshots[0].contribEstimated, false);
+});
+
+test("addMonths walks across year boundaries", () => {
+  assert.equal(addMonths("2026-08", -6), "2026-02");
+  assert.equal(addMonths("2026-03", -6), "2025-09");
+  assert.equal(addMonths("2026-12", 1), "2027-01");
+  assert.equal(addMonths("bad", -1), null);
+});
+
+test("a partly-priced account is left alone rather than left half converted", () => {
+  const data = build(
+    [acc("btc", { type: "crypto", currency: "BTC" }), acc("eth", { type: "crypto", currency: "ETH" })],
+    [
+      snap("b1", "btc", "2026-03", 0.01, { currency: "BTC", contributed: 0.01, contribCurrency: "BTC" }),
+      snap("b2", "btc", "2026-04", 0.02, { currency: "BTC", contributed: 0.01, contribCurrency: "BTC" }),
+      snap("e1", "eth", "2026-03", 1, { currency: "ETH", contributed: 1, contribCurrency: "ETH" }),
+      snap("e2", "eth", "2026-04", 1, { currency: "ETH", contributed: 0, contribCurrency: "ETH" }),
+    ]
+  );
+  // April's BTC price is unavailable (rate limited); ETH is fully priced
+  const priceRub = (m, c) => (c === "BTC" && m === "2026-04" ? null : 1_000_000);
+  const { data: out, changed, missing } = estimateCoinBasis(data, { assumedMonth: "2025-09", priceRub, nowIso: T });
+  const btc = out.snapshots.filter((s) => s.accountId === "btc");
+  assert.ok(btc.every((s) => s.contribCurrency === "BTC"), "a half-converted basis is worse than none");
+  const eth = out.snapshots.filter((s) => s.accountId === "eth");
+  assert.ok(eth.every((s) => s.contribCurrency === "RUB"));
+  assert.equal(eth.find((s) => s.month === "2026-04").contributed, 0, "zero coins need no price");
+  assert.equal(missing.length, 1);
+  assert.equal(changed.length, 1);
+});
+
+test("a zero contribution costs no price lookup", () => {
+  const data = build(
+    [acc("btc", { type: "crypto", currency: "BTC" })],
+    [
+      snap("b1", "btc", "2026-03", 0.01, { currency: "BTC", contributed: 0.01, contribCurrency: "BTC" }),
+      snap("b2", "btc", "2026-04", 0.01, { currency: "BTC", contributed: 0, contribCurrency: "BTC" }),
+      snap("b3", "btc", "2026-05", 0.01, { currency: "BTC", contributed: 0, contribCurrency: "BTC" }),
+    ]
+  );
+  assert.deepEqual(coinBasisPricePairs(data, "2025-09"), [{ month: "2025-09", currency: "BTC" }]);
 });

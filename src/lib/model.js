@@ -95,6 +95,15 @@ export const prevMonth = (m) => {
   return `${y}-${String(mo).padStart(2, "0")}`;
 };
 
+// Shifts a month by n (negative goes back). Used for the assumed purchase date.
+export const addMonths = (m, n) => {
+  if (!isMonth(m) || !Number.isInteger(n)) return null;
+  const [y, mo] = m.split("-").map(Number);
+  const t = (y * 12 + (mo - 1)) + n;
+  if (t < 0) return null;
+  return `${Math.floor(t / 12)}-${String((t % 12) + 1).padStart(2, "0")}`;
+};
+
 export const nextMonth = (m) => {
   if (!isMonth(m)) return null;
   let [y, mo] = m.split("-").map(Number);
@@ -197,7 +206,7 @@ export const normalize = (raw) => {
           id, accountId, month,
           balance: Number.isFinite(parseNum(s.balance)) ? roundAmount(parseNum(s.balance)) : 0,
           currency: normCurrency(s.currency, accById.get(accountId)?.currency || BASE_CURRENCY),
-          contributed: null, contribCurrency: null,
+          contributed: null, contribCurrency: null, contribEstimated: false,
           updatedAt: s.updatedAt || "", deletedAt,
         });
       }
@@ -222,10 +231,14 @@ export const normalize = (raw) => {
       currency: normCurrency(s.currency, acc.currency),
       contributed: Number.isFinite(contributed) ? roundAmount(contributed) : null,
       contribCurrency: null,
+      // Set when the contribution is not a figure the user entered but one the
+      // app derived from a historical price, so the UI can show it as "≈".
+      contribEstimated: String(s.contribEstimated ?? "").toLowerCase() === "true",
       updatedAt: s.updatedAt || "",
       deletedAt: "",
     };
     if (rec.contributed !== null) rec.contribCurrency = normCurrency(s.contribCurrency, rec.currency);
+    else rec.contribEstimated = false;
 
     // Duplicate (account, month): the most recently updated one wins, so a
     // stale row left over from an older write cannot double-count.
@@ -378,6 +391,7 @@ export const migrateV1 = (v1, nowIso) => {
         currency: acc.currency,
         contributed,
         contribCurrency: contributed === null ? null : acc.currency,
+        contribEstimated: false,
         updatedAt: stamp,
         deletedAt: "",
       });
@@ -495,6 +509,105 @@ export const mergeData = (local, remote, nowIso) => {
     rates: [...rates.values()],
     quarantine: [...(l.quarantine || []), ...(r.quarantine || [])],
   });
+};
+
+// Turns a cost basis that was recorded as a COIN QUANTITY into roubles.
+//
+// A coin amount is not a purchase price: converting it at any single rate makes
+// P&L come out as exactly zero, because the same rate cancels on both sides of
+// value - basis. The only way to get a number is to price the coins at the
+// moment they were bought — which v1 never recorded. `assumedMonth` is that
+// missing fact, supplied by the user, and every value derived from it is marked
+// `contribEstimated` so it is never mistaken for something they typed.
+//
+// The first coin contribution of an account is priced at `assumedMonth`; any
+// later one is priced at the month it was recorded in, since a later addition
+// did happen then.
+// The (month, currency) pairs an estimate needs priced, so the caller can fetch
+// exactly those and nothing more. A contribution of zero needs no price — zero
+// coins are zero roubles at any rate — which keeps the request count at one per
+// coin instead of one per month, well under CoinGecko's free-tier limit.
+export const coinBasisPricePairs = (data, assumedMonth) => {
+  const out = new Map();
+  for (const [, list] of coinBasisAccounts(data)) {
+    list.forEach((s, i) => {
+      if (s.contributed === 0) return;
+      const month = i === 0 ? assumedMonth : s.month;
+      out.set(`${month}|${s.contribCurrency}`, { month, currency: s.contribCurrency });
+    });
+  }
+  return [...out.values()];
+};
+
+const coinBasisAccounts = (data) => {
+  const byAccount = new Map();
+  for (const s of live(data.snapshots)) {
+    if (s.contributed === null || !isCrypto(s.contribCurrency)) continue;
+    if (!byAccount.has(s.accountId)) byAccount.set(s.accountId, []);
+    byAccount.get(s.accountId).push(s);
+  }
+  for (const list of byAccount.values()) list.sort((a, b) => (a.month < b.month ? -1 : a.month > b.month ? 1 : 0));
+  return byAccount;
+};
+
+// Turns a cost basis that was recorded as a COIN QUANTITY into roubles.
+//
+// A coin amount is not a purchase price: converting it at any single rate makes
+// P&L come out as exactly zero, because the same rate cancels on both sides of
+// value - basis. The only way to get a number is to price the coins at the
+// moment they were bought — which v1 never recorded. `assumedMonth` is that
+// missing fact, supplied by the user, and every value derived from it is marked
+// `contribEstimated` so it is never mistaken for something they typed.
+//
+// The first coin contribution of an account is priced at `assumedMonth`; any
+// later one is priced at the month it was recorded in, since a later addition
+// did happen then.
+//
+// All or nothing PER ACCOUNT: converting only some of an account's months would
+// leave a basis half in coins and half in roubles, which is worse than leaving
+// it alone — costBasis rightly refuses to trust a mixed series.
+export const estimateCoinBasis = (data, { assumedMonth, priceRub, nowIso }) => {
+  const stamp = nowIso || new Date().toISOString();
+  const changed = [];
+  const missing = [];
+  const priced = new Map();
+
+  for (const [accountId, list] of coinBasisAccounts(data)) {
+    const acc = data.accounts.find((a) => a.id === accountId);
+    const forAccount = [];
+    let ok = true;
+    list.forEach((s, i) => {
+      if (!ok) return;
+      const month = i === 0 ? assumedMonth : s.month;
+      if (s.contributed === 0) { forAccount.push([s.id, { rub: 0, month }]); return; }
+      const rate = priceRub(month, s.contribCurrency);
+      if (!Number.isFinite(rate) || rate <= 0) {
+        missing.push({ accountId, name: acc?.name, month, currency: s.contribCurrency });
+        ok = false;
+        return;
+      }
+      forAccount.push([s.id, { rub: roundAmount(s.contributed * rate), month, rate, coins: s.contributed, currency: s.contribCurrency }]);
+    });
+    if (!ok) continue;
+    for (const [id, p] of forAccount) {
+      priced.set(id, p);
+      if (p.coins) changed.push({ accountId, name: acc?.name, month: p.month, coins: p.coins, currency: p.currency, rub: p.rub });
+    }
+  }
+  if (!priced.size) return { data, changed, missing };
+
+  return {
+    data: normalize({
+      ...data,
+      snapshots: data.snapshots.map((s) => {
+        const p = priced.get(s.id);
+        if (!p) return s;
+        return { ...s, contributed: p.rub, contribCurrency: BASE_CURRENCY, contribEstimated: true, updatedAt: stamp };
+      }),
+    }),
+    changed,
+    missing,
+  };
 };
 
 export const purgeTombstones = (data, now = new Date(), days = TOMBSTONE_TTL_DAYS) => {

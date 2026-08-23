@@ -18,7 +18,7 @@
 import { SCHEMA_VERSION } from "./model.js";
 
 export const ACCOUNT_HEADER = ["id", "name", "type", "currency", "openedMonth", "closedMonth", "updatedAt", "deletedAt"];
-export const SNAPSHOT_HEADER = ["id", "accountId", "month", "balance", "currency", "contributed", "contribCurrency", "updatedAt", "deletedAt"];
+export const SNAPSHOT_HEADER = ["id", "accountId", "month", "balance", "currency", "contributed", "contribCurrency", "contribEstimated", "updatedAt", "deletedAt"];
 export const RATE_HEADER = ["month", "currency", "perUSD", "fetchedAt"];
 export const META_HEADER = ["key", "value"];
 // The pre-migration data is copied here once, so the only copy of the v1
@@ -261,7 +261,7 @@ export const buildValues = (data) => {
   ]), ...quarantineRows(data, "account", ACCOUNT_HEADER)];
   const snapshots = [SNAPSHOT_HEADER, ...data.snapshots.map((s) => [
     s.id, s.accountId, s.month, num(s.balance), s.currency,
-    num(s.contributed), s.contribCurrency || "", s.updatedAt || "", s.deletedAt || "",
+    num(s.contributed), s.contribCurrency || "", s.contribEstimated ? "true" : "", s.updatedAt || "", s.deletedAt || "",
   ]), ...quarantineRows(data, "snapshot", SNAPSHOT_HEADER)];
   const rates = [RATE_HEADER, ...data.rates.map((r) => [r.month, r.currency, num(r.perUSD), r.fetchedAt || ""])];
   return { accounts, snapshots, rates };

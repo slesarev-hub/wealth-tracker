@@ -5,7 +5,9 @@ import {
   ACCOUNT_TYPES, CURRENCIES, CRYPTO_IDS, BASE_CURRENCY, HAS_PNL, SCHEMA_VERSION,
   isCrypto, parseNum, roundAmount, prevMonth, currentMonth, isMonth, live,
   ensureV2, mergeData, purgeTombstones, emptyData, balSign,
+  addMonths, estimateCoinBasis, coinBasisPricePairs,
 } from "./lib/model.js";
+import { fetchPriceTable } from "./lib/prices.js";
 import {
   makeRatesOf, convert, snapshotIndex, monthsOf, getSnapshot, effectiveSnapshot,
   monthTotal, breakdown, monthlyChange, percentChange, accountDelta, pnlFor,
@@ -23,6 +25,11 @@ const LS_RATES = "money-tracker-rates-v2";
 const SCOPES = "https://www.googleapis.com/auth/spreadsheets";
 const DISPLAY_CURRENCIES = ["RUB", "USD", "EUR"];
 const RATES_STALE_MS = 36 * 3600 * 1000;
+// v1 recorded a crypto cost basis as a coin quantity, which can never yield a
+// return: the same rate cancels on both sides of value - basis. Pricing those
+// coins needs a purchase date, which was never recorded — this is the
+// assumption the user supplied in its place.
+const ASSUMED_PURCHASE_MONTHS_AGO = 6;
 
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2) + Date.now());
 const nowIso = () => new Date().toISOString();
@@ -64,6 +71,7 @@ export default function App() {
   const [form, setForm] = useState({});
   const [selectedMonth, setSelectedMonth] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [estimating, setEstimating] = useState(false);
 
   // ── rates ──────────────────────────────────────────────────────────────────
   const [rates, setRates] = useState(() => {
@@ -434,6 +442,38 @@ export default function App() {
     setModal(null);
   };
 
+  // Prices the coin-denominated contributions at the assumed purchase month and
+  // writes them back in roubles, marked as estimates.
+  const assumedPurchaseMonth = addMonths(currentMonth(), -ASSUMED_PURCHASE_MONTHS_AGO);
+  const coinBasisAccounts = live(data.accounts).filter((a) =>
+    live(data.snapshots).some((s) => s.accountId === a.id && s.contributed !== null && isCrypto(s.contribCurrency)));
+
+  const runCoinBasisEstimate = async () => {
+    setEstimating(true);
+    try {
+      const base = dataRef.current;
+      const pairs = coinBasisPricePairs(base, assumedPurchaseMonth);
+      const priceRub = await fetchPriceTable(pairs);
+      const { data: next, changed, missing } = estimateCoinBasis(base, {
+        assumedMonth: assumedPurchaseMonth, priceRub, nowIso: nowIso(),
+      });
+      if (!changed.length) {
+        setNotice({ kind: "cost-basis", text: "Не удалось получить исторические цены — попробуйте ещё раз позже." });
+        return;
+      }
+      save(next);
+      const lines = changed.map((c) => `${c.name}: ${c.coins} ${c.currency} → ${fmtShort(c.rub)} ₽ по курсу ${monthLabel(c.month)}`);
+      setNotice({
+        kind: "cost-basis",
+        text: `Вложения оценены по курсу ${monthLabel(assumedPurchaseMonth)}. ${lines.join("; ")}.`
+          + (missing.length ? ` Не удалось оценить: ${missing.map((m) => m.name).join(", ")}.` : "")
+          + " Это оценка, а не факт — доходность помечена «≈». Если знаете реальную сумму, впишите её в «Внесено за месяц».",
+      });
+    } catch (e) {
+      setNotice({ kind: "cost-basis", text: "Ошибка при получении исторических цен: " + (e?.message || e) });
+    } finally { setEstimating(false); }
+  };
+
   // ── account actions ────────────────────────────────────────────────────────
   const addAccount = () => {
     const name = newAccount.name.trim();
@@ -687,9 +727,28 @@ export default function App() {
         {data.quarantine?.length > 0 && warn(
           `${data.quarantine.length} строк(и) в таблице не удалось прочитать (${[...new Set(data.quarantine.map((q) => q.reason))].join("; ")}). Они не участвуют в расчётах, но сохранены в таблице без изменений.`
         )}
+        {!notice && coinBasisAccounts.length > 0 && (
+          <div style={{ background: "#1a1a12", border: "1px solid #fcd34d44", color: "#fcd34d", borderRadius: 10, padding: "10px 14px", fontSize: 12, marginBottom: 14, lineHeight: 1.6, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ flex: 1, minWidth: 200 }}>
+              У {coinBasisAccounts.length === 1 ? "счёта" : "счетов"} {coinBasisAccounts.map((a) => a.name).join(", ")} вложения записаны в монетах — доходность из этого не считается.
+            </span>
+            <button className="btn-ghost" style={{ fontSize: 11, padding: "5px 10px", color: "#fcd34d", borderColor: "#fcd34d55", whiteSpace: "nowrap" }}
+              disabled={estimating} onClick={runCoinBasisEstimate}
+              title={`Возьмёт количество монет и оценит его по цене на середину ${monthLabel(assumedPurchaseMonth)} — предполагаемый месяц покупки. Результат помечается как оценка.`}>
+              {estimating ? "Считаю…" : `Оценить по ${monthLabel(assumedPurchaseMonth)}`}
+            </button>
+          </div>
+        )}
         {notice?.kind === "cost-basis" && (
           <div style={{ background: "#1a1a12", border: "1px solid #fcd34d44", color: "#fcd34d", borderRadius: 10, padding: "10px 14px", fontSize: 12, marginBottom: 14, lineHeight: 1.6, display: "flex", gap: 12, alignItems: "flex-start" }}>
             <span style={{ flex: 1 }}>{notice.text}</span>
+            {coinBasisAccounts.length > 0 && (
+              <button className="btn-ghost" style={{ fontSize: 11, padding: "5px 10px", color: "#fcd34d", borderColor: "#fcd34d55", whiteSpace: "nowrap" }}
+                disabled={estimating} onClick={runCoinBasisEstimate}
+                title={`Возьмёт количество монет и оценит его по цене на середину ${monthLabel(assumedPurchaseMonth)} — предполагаемый месяц покупки. Результат помечается как оценка.`}>
+                {estimating ? "Считаю…" : `Оценить по ${monthLabel(assumedPurchaseMonth)}`}
+              </button>
+            )}
             <button className="icon-btn" style={{ color: "#fcd34d" }} onClick={() => setNotice(null)}>✕</button>
           </div>
         )}
