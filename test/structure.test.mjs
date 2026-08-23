@@ -66,7 +66,7 @@ test("a single leftover keeps its own name and its own fields", () => {
   const data = build(accounts, accounts.map((a, i) => snap("s" + i, a.id, "2026-01", 100 - i)));
   const s = structureFor(data, "2026-01", "RUB", makeRatesOf(data, R), snapshotIndex(data));
   const last = s.byAccount[MAX_SLICES];
-  assert.equal(last.label, "Счёт " + (n - 1));
+  assert.ok(last.label.startsWith("Счёт " + (n - 1)), last.label);
   assert.equal(last.members, undefined, "one leftover is not a group");
   assert.ok(last.icon, "and it keeps the fields a normal slice has");
 });
@@ -90,7 +90,8 @@ test("accounts that share a name are told apart", () => {
   const labels = s.byAccount.map((x) => x.label);
   assert.equal(new Set(labels).size, labels.length, "two rows reading «Газпромбанк» with different amounts is unreadable");
   assert.ok(labels.some((l) => l.includes("Вклад")));
-  assert.equal(labels.filter((l) => l === "Тбанк").length, 1, "a unique name is left alone");
+  assert.equal(labels.filter((l) => l.startsWith("Тбанк")).length, 1);
+  assert.ok(labels.every((l) => l.includes(" · ")), "every row says what kind of account it is");
 });
 
 test("a negative balance on an asset account does not create a share above 100%", () => {
@@ -163,7 +164,10 @@ test("a non-rouble account carries its own currency and amount", () => {
   const eur = s.accountRows.find((x) => x.key === "eur");
   assert.equal(eur.currency, "EUR");
   assert.equal(eur.native, 2400, "a rouble figure alone says nothing about the account being in euro");
-  assert.equal(eur.label, "тумба у окна", "a unique name needs no suffix to carry the currency");
+  // Every row states its instrument, so no row is left looking unlabelled
+  // next to one that carries a suffix only because its name is duplicated.
+  assert.equal(eur.label, "тумба у окна · Наличные");
+  assert.ok(!eur.label.includes("EUR"), "the currency lives in the amount column, not the name");
 });
 
 test("the currency is only appended when the type does not tell two accounts apart", () => {
@@ -185,4 +189,43 @@ test("the currency is only appended when the type does not tell two accounts apa
   assert.equal(by.b, "У родителей · Наличные USD");
   const labels = s.accountRows.map((x) => x.label);
   assert.equal(new Set(labels).size, labels.length);
+});
+
+test("a slice knows which accounts it is made of", () => {
+  const data = build(
+    [
+      acc("c1", { name: "под столом", type: "cash" }),
+      acc("c2", { name: "тумба", type: "cash", currency: "EUR" }),
+      acc("d1", { name: "вклад", type: "deposit" }),
+    ],
+    [
+      snap("s1", "c1", "2026-01", 5000), snap("s2", "c2", "2026-01", 100, { currency: "EUR" }),
+      snap("s3", "d1", "2026-01", 3000),
+    ]
+  );
+  const s = structureFor(data, "2026-01", "RUB", makeRatesOf(data, R), snapshotIndex(data));
+  const cash = s.byType.find((x) => x.label.startsWith("Наличные"));
+  assert.equal(cash.parts.length, 2);
+  // 100 € converts to ~8 889 ₽, which beats 5 000 ₽ — the order is by the
+  // rouble value, not by the raw number typed in.
+  assert.deepEqual(cash.parts.map((p) => p.accountId), ["c2", "c1"], "biggest first, in roubles");
+  assert.equal(cash.parts[0].native, 100);
+  assert.equal(cash.parts[0].currency, "EUR");
+  assert.ok(Math.abs(cash.parts.reduce((x, p) => x + p.value, 0) - cash.value) < 1e-6,
+    "the parts must add up to the slice they belong to");
+
+  const eur = s.byCurrency.find((x) => (x.ofKey || x.key) === "EUR");
+  assert.equal(eur.parts.length, 1);
+  assert.equal(eur.parts[0].accountId, "c2");
+});
+
+test("a folded slice lists the accounts of everything inside it", () => {
+  const cur = ["RUB", "USD", "EUR", "GBP", "AED", "BTC", "ETH"];
+  const accounts = cur.map((c, i) => acc("a" + i, { currency: c, name: "acc" + i }));
+  const data = build(accounts, accounts.map((a, i) => snap("s" + i, a.id, "2026-01", 1000 - i * 100, { currency: cur[i] })));
+  const s = structureFor(data, "2026-01", "RUB",
+    makeRatesOf(data, { rates: { USD: 1, RUB: 80, EUR: 0.9, GBP: 0.8, AED: 3.67, BTC: 1e-5, ETH: 1e-4 } }), snapshotIndex(data));
+  const other = s.byCurrency[s.byCurrency.length - 1];
+  assert.ok(other.parts.length >= 1);
+  assert.ok(Math.abs(other.parts.reduce((x, p) => x + p.value, 0) - other.value) < 1e-6);
 });

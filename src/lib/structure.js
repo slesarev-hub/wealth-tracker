@@ -31,6 +31,10 @@ const sumsFor = (data, month, toCurrency, table, idx) => {
   const byType = new Map();
   const byAccount = new Map();
   const nativeOf = new Map();
+  // Which accounts make up each currency and each instrument slice, so hovering
+  // a wedge can answer "made of what?" instead of only "how much".
+  const partsOfCurrency = new Map();
+  const partsOfType = new Map();
   let assets = 0;
   let liabilities = 0;
   const unconverted = [];
@@ -54,8 +58,14 @@ const sumsFor = (data, month, toCurrency, table, idx) => {
     // Kept so a non-base account can show what it actually holds: a EUR account
     // reading only "233K ₽" says nothing about it being in euro at all.
     nativeOf.set(acc.id, { native: snap.balance, currency: snap.currency });
+
+    const part = { accountId: acc.id, value: v, native: snap.balance, currency: snap.currency, type: acc.type };
+    if (!partsOfCurrency.has(snap.currency)) partsOfCurrency.set(snap.currency, []);
+    partsOfCurrency.get(snap.currency).push(part);
+    if (!partsOfType.has(acc.type)) partsOfType.set(acc.type, []);
+    partsOfType.get(acc.type).push(part);
   }
-  return { byCurrency, byType, byAccount, nativeOf, assets, liabilities, unconverted };
+  return { byCurrency, byType, byAccount, nativeOf, partsOfCurrency, partsOfType, assets, liabilities, unconverted };
 };
 
 // The ranking every month is coloured by: each key's total over the whole
@@ -128,8 +138,9 @@ export const structureFor = (data, month, toCurrency, ratesOf, idx) => {
   const nameOf = (id) => {
     const a = data.accounts.find((x) => x.id === id);
     if (!a) return id;
-    if ((counts.get(a.name) || 0) < 2) return a.name;
     const t = ACCOUNT_TYPES.find((x) => x.id === a.type)?.label || a.type;
+    // Currency only when the name AND the type collide — the amount column
+    // already shows the currency of every non-base account.
     const needCurrency = (typeCounts.get(`${a.name}|${a.type}`) || 0) > 1;
     return `${a.name} · ${t}${needCurrency ? " " + a.currency : ""}`;
   };
@@ -142,20 +153,31 @@ export const structureFor = (data, month, toCurrency, ratesOf, idx) => {
   const accOrder = stableOrder(data, toCurrency, ratesOf, idx,
     (x) => [...x.byAccount.entries()]);
 
+  // The accounts behind one slice, biggest first, ready for a tooltip.
+  const partsFor = (list) => (list || [])
+    .map((x) => ({ ...x, value: roundAmount(x.value), label: nameOf(x.accountId) }))
+    .sort((a, b) => b.value - a.value);
+  const withParts = (slices, pick) => slices.map((sl) => ({
+    ...sl,
+    parts: sl.members
+      ? partsFor(sl.members.flatMap((mm) => pick(mm.key) || []))
+      : partsFor(pick(sl.ofKey || sl.key)),
+  }));
+
   return {
     month,
     assets: roundAmount(s.assets),
     liabilities: roundAmount(s.liabilities),
     net: roundAmount(s.assets - s.liabilities),
     unconverted: s.unconverted,
-    byCurrency: toSlices(
+    byCurrency: withParts(toSlices(
       [...s.byCurrency.entries()].map(([key, v]) => ({ key, value: roundAmount(v.value), native: v.native })),
       curOrder, (k) => k, s.assets
-    ),
-    byType: toSlices(
+    ), (k) => s.partsOfCurrency.get(k)),
+    byType: withParts(toSlices(
       [...s.byType.entries()].map(([key, value]) => ({ key, value: roundAmount(value) })),
       typeOrder, typeLabel, s.assets
-    ),
+    ), (k) => s.partsOfType.get(k)),
     byAccount: toSlices(
       [...s.byAccount.entries()].map(([key, value]) => ({ key, value: roundAmount(value), icon: iconOf(key) })),
       accOrder, nameOf, s.assets

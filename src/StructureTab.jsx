@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
+import { PieChart, Pie, Cell, ResponsiveContainer } from "recharts";
 
 import { BASE_CURRENCY } from "./lib/model.js";
 import { CURRENCY_SYMBOLS, fmtShort, fmtAmount, monthLabel } from "./lib/format.js";
@@ -23,6 +23,41 @@ const INK = "#e8eaf0", INK_2 = "#9ca3af", INK_3 = "#6b7280";
 
 const colorOf = (slice) => (slice.key === OTHER_KEY ? OTHER : SLOT[slice.slot] || OTHER);
 const pct = (x) => (x * 100).toFixed(x >= 0.1 ? 0 : 1) + "%";
+
+// Hovering a wedge answers "made of what?", not just "how much" — the accounts
+// behind that slice, biggest first.
+const MAX_PARTS = 9;
+const SlicePanel = ({ d }) => {
+  if (!d) return null;
+  const parts = d.parts || [];
+  const shown = parts.slice(0, MAX_PARTS);
+  return (
+    <div style={{
+      position: "absolute", left: 176, top: 0, zIndex: 6, minWidth: 240, maxWidth: 340,
+      background: "#1a1d26", border: "1px solid #2a2d38", borderRadius: 8,
+      fontFamily: "DM Mono", fontSize: 12, padding: "10px 12px",
+      boxShadow: "0 8px 24px rgba(0,0,0,0.55)", pointerEvents: "none",
+    }}>
+      <div style={{ display: "flex", gap: 12, alignItems: "baseline", marginBottom: parts.length ? 8 : 0 }}>
+        <span style={{ color: INK, flex: 1 }}>{d.label}</span>
+        <span style={{ color: INK }}>{fmtShort(d.value)} ₽</span>
+        <span style={{ color: INK_2 }}>{pct(d.share)}</span>
+      </div>
+      {shown.map((p) => (
+        <div key={p.accountId} style={{ display: "flex", gap: 10, alignItems: "baseline", padding: "2px 0", borderTop: "1px solid #22252f" }}>
+          <span style={{ color: INK_2, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.label}</span>
+          {p.currency !== BASE_CURRENCY && (
+            <span style={{ color: INK_3, whiteSpace: "nowrap" }}>{fmtAmount(p.native, p.currency)} {CURRENCY_SYMBOLS[p.currency] || p.currency}</span>
+          )}
+          <span style={{ color: INK, whiteSpace: "nowrap" }}>{fmtShort(p.value)} ₽</span>
+        </div>
+      ))}
+      {parts.length > MAX_PARTS && (
+        <div style={{ color: INK_3, paddingTop: 4, borderTop: "1px solid #22252f" }}>и ещё {parts.length - MAX_PARTS}</div>
+      )}
+    </div>
+  );
+};
 
 // NB: never name a prop `valueOf`/`toString` — destructuring an absent one
 // picks the method up off Object.prototype instead of yielding undefined.
@@ -58,7 +93,10 @@ const Bars = ({ title, rows }) => {
 };
 
 const Donut = ({ title, slices, total, secondary }) => {
+  // `from` records where the hover came from: the panel is only worth showing
+  // over the list when the pointer is on the ring, not when it is on the list.
   const [active, setActive] = useState(null);
+  const [from, setFrom] = useState(null);
   const [open, setOpen] = useState(false);
 
   const rows = slices.filter((s) => s.value > 0);
@@ -66,12 +104,13 @@ const Donut = ({ title, slices, total, secondary }) => {
   // links them by KEY, and a key that is no longer on screen highlights nothing
   // — otherwise a stale key would leave the whole ring dimmed with nothing lit.
   const lit = active !== null && rows.some((r) => r.key === active) ? active : null;
+  const panelFor = from === "ring" && lit ? rows.find((r) => r.key === lit) : null;
   const ranked = [...rows].sort((a, b) => b.value - a.value);
   if (!rows.length) return null;
 
   const Row = ({ s, inset }) => (
     <div
-      onMouseEnter={() => setActive(s.key)} onMouseLeave={() => setActive(null)}
+      onMouseEnter={() => { setActive(s.key); setFrom("list"); }} onMouseLeave={() => setActive(null)}
       style={{ position: "relative", display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6, marginLeft: inset ? 18 : 0 }}>
       {/* A share bar behind each row. The list is the readable chart and the
           ring is the glance, so nothing is lost when the tail is folded. */}
@@ -93,7 +132,8 @@ const Donut = ({ title, slices, total, secondary }) => {
     <div className="card" style={{ padding: "18px 20px" }}>
       <div className="lbl" style={{ marginBottom: 12 }}>{title}</div>
 
-      <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 18, alignItems: "center", flexWrap: "wrap", position: "relative" }}>
+        <SlicePanel d={panelFor} />
         <div style={{ position: "relative", width: 168, height: 168, flexShrink: 0 }}>
           <ResponsiveContainer width="100%" height="100%">
             <PieChart>
@@ -104,17 +144,14 @@ const Donut = ({ title, slices, total, secondary }) => {
                 // gap and the surface stroke while the list still reports it.
                 paddingAngle={1} minAngle={3} startAngle={90} endAngle={-270}
                 stroke={SURFACE} strokeWidth={2} isAnimationActive={false}
-                onMouseEnter={(e) => setActive(e?.payload?.key ?? null)} onMouseLeave={() => setActive(null)}
+                onMouseEnter={(e) => { setActive(e?.payload?.key ?? null); setFrom("ring"); }}
+                onMouseLeave={() => setActive(null)}
               >
                 {rows.map((s) => (
                   <Cell key={s.key} fill={colorOf(s)} opacity={lit === null || lit === s.key ? 1 : 0.4} />
                 ))}
               </Pie>
-              <Tooltip
-                contentStyle={{ background: "#1a1d26", border: "1px solid #2a2d38", borderRadius: 8, fontFamily: "DM Mono", fontSize: 12 }}
-                itemStyle={{ color: INK }} labelStyle={{ display: "none" }}
-                formatter={(v, _n, p) => [`${fmtShort(v)} ₽ · ${pct(p.payload.share)}`, p.payload.label]}
-              />
+
             </PieChart>
           </ResponsiveContainer>
           <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", pointerEvents: "none" }}>
