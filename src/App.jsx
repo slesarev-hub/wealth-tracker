@@ -557,7 +557,13 @@ export default function App() {
   };
 
   const isConnected = !!token && !!sheetId;
-  const syncColor = { idle: "#4b5563", syncing: "#fcd34d", ok: "#6ee7b7", error: "#f87171" }[syncStatus];
+  // Not being signed in is the one state that silently loses data: every edit
+  // stays in this browser only. It must never read as neutral grey.
+  const signedOut = !isConnected;
+  const syncColor = signedOut
+    ? "#f87171"
+    : { idle: "#4b5563", syncing: "#fcd34d", ok: "#6ee7b7", error: "#f87171" }[syncStatus];
+  const signedOutText = clientId ? "Вход не выполнен" : "Sheets не настроен";
   // Same inclusion rule as monthTotal: a field left blank keeps the balance the
   // month would actually be saved with, instead of silently counting as zero.
   const formTotal = formAccounts.reduce((sum, acc) => {
@@ -607,6 +613,8 @@ export default function App() {
         .fade-in { animation: fadeIn 0.2s ease; }
         .sync-pill { display:flex; align-items:center; gap:6px; cursor:pointer; font-size:11px; padding:4px 10px; background:#111320; border-radius:6px; transition: opacity 0.15s; }
         .sync-pill:hover { opacity: 0.8; }
+        @keyframes alarm { 0%,100% { box-shadow: 0 0 0 0 rgba(248,113,113,0.45); } 50% { box-shadow: 0 0 0 4px rgba(248,113,113,0); } }
+        .sync-alarm { animation: alarm 2s ease-out infinite; }
         .card { background:#111320; border:1px solid #1e2030; border-radius:12px; }
         .lbl { font-size:11px; color:#6b7280; letter-spacing:0.08em; text-transform:uppercase; }
       `}</style>
@@ -617,14 +625,20 @@ export default function App() {
             <span style={{ color: "#6ee7b7" }}>₽</span> wealth tracker
           </div>
 
-          <div className="sync-pill" style={{ border: `1px solid ${syncColor}33`, color: syncColor }}
+          <div className={"sync-pill" + (signedOut ? " sync-alarm" : "")}
+            style={signedOut
+              ? { border: "1px solid #f87171", background: "#2b1416", color: "#fca5a5", fontWeight: 500 }
+              : { border: `1px solid ${syncColor}33`, color: syncColor }}
+            title={signedOut ? "Данные сохраняются только в этом браузере" : undefined}
             onClick={() => {
               if (!clientId) { setClientIdDraft(""); setSheetIdDraft(""); setModal("setup"); }
               else if (!token) requestToken();
               else syncNow(token, sheetId);
             }}>
-            {syncStatus === "syncing" ? <span className="spin">↻</span> : <span style={{ fontSize: 14 }}>⬡</span>}
-            <span>{syncStatus === "idle" ? (clientId ? "Войти в Google" : "Настроить Sheets") : (syncMsg || "Sheets")}</span>
+            {syncStatus === "syncing"
+              ? <span className="spin">↻</span>
+              : <span style={{ fontSize: 14 }}>{signedOut ? "⚠" : "⬡"}</span>}
+            <span>{syncStatus === "syncing" ? (syncMsg || "Синхронизация…") : signedOut ? signedOutText : (syncMsg || "Sheets")}</span>
           </div>
 
           {clientId && (
@@ -645,6 +659,19 @@ export default function App() {
 
       <div style={{ maxWidth: 760, margin: "0 auto", padding: "28px 24px" }}>
 
+        {signedOut && (live(data.accounts).length > 0 || months.length > 0) && (
+          <div style={{ background: "#2b1416", border: "1px solid #f8717166", borderRadius: 10, padding: "12px 16px", marginBottom: 14, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
+            <span style={{ fontSize: 16 }}>⚠</span>
+            <div style={{ flex: 1, minWidth: 220, fontSize: 12, color: "#fca5a5", lineHeight: 1.6 }}>
+              <b style={{ color: "#f87171" }}>{signedOutText}.</b>{" "}
+              Записи сохраняются только в этом браузере и не попадают в Google Sheets. Если очистить данные сайта — они пропадут.
+            </div>
+            <button className="btn-primary" style={{ background: "#f87171", fontSize: 12, padding: "7px 14px" }}
+              onClick={() => (clientId ? requestToken() : (setClientIdDraft(""), setSheetIdDraft(""), setModal("setup")))}>
+              {clientId ? "Войти в Google" : "Настроить"}
+            </button>
+          </div>
+        )}
         {ratesErrors.length > 0 && warn(`Курс не загружен: ${ratesErrors.join(", ")}. Показаны последние известные курсы${rates?.fetchedAt ? ` от ${new Date(rates.fetchedAt).toLocaleString("ru-RU")}` : ""}.`, "#f87171")}
         {ratesErrors.length === 0 && ratesStale && warn(`Курсы не обновлялись с ${new Date(rates.fetchedAt).toLocaleString("ru-RU")}.`)}
         {data.quarantine?.length > 0 && warn(
@@ -871,8 +898,8 @@ export default function App() {
                 </div>
               ) : (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
-                  <div style={{ fontSize: 13, color: "#6b7280" }}>{clientId ? "Требуется авторизация" : "Не настроено — данные только в этом браузере"}</div>
-                  <button className="btn-primary" style={{ fontSize: 12, padding: "7px 14px" }}
+                  <div style={{ fontSize: 13, color: "#f87171" }}>⚠ {clientId ? "Вход не выполнен — данные только в этом браузере" : "Не настроено — данные только в этом браузере"}</div>
+                  <button className="btn-primary" style={{ background: "#f87171", fontSize: 12, padding: "7px 14px" }}
                     onClick={() => (clientId ? requestToken() : (setClientIdDraft(""), setSheetIdDraft(""), setModal("setup")))}>
                     {clientId ? "Войти" : "Настроить"}
                   </button>
