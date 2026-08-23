@@ -15,6 +15,7 @@ import {
 } from "./lib/calc.js";
 import { CURRENCY_SYMBOLS, fmtShort, fmtBalance, fmtSigned, monthLabel } from "./lib/format.js";
 import ReturnsTab from "./ReturnsTab.jsx";
+import StructureTab from "./StructureTab.jsx";
 import { readFromSheets, writeToSheets, createSpreadsheet, SheetsError } from "./lib/sheets.js";
 
 const LS_KEY = "money-tracker-v2";
@@ -698,8 +699,8 @@ export default function App() {
             </div>
           )}
 
-          <div style={{ display: "flex", gap: 2 }}>
-            {[["dashboard", "Обзор"], ["returns", "Доходность"], ["accounts", "Счета"], ["history", "История"]].map(([id, label]) => (
+          <div style={{ display: "flex", gap: 2, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {[["dashboard", "Обзор"], ["structure", "Структура"], ["returns", "Доходность"], ["accounts", "Счета"], ["history", "История"]].map(([id, label]) => (
               <button key={id} className="tab-btn" onClick={() => setTab(id)}
                 style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, fontFamily: "inherit", color: tab === id ? "#6ee7b7" : "#6b7280", background: tab === id ? "#1a2820" : "none" }}>{label}</button>
             ))}
@@ -936,6 +937,7 @@ export default function App() {
         )}
 
         {/* ── ACCOUNTS ── */}
+        {tab === "structure" && <StructureTab data={data} months={months} idx={idx} ratesOf={ratesOf} />}
         {tab === "returns" && <ReturnsTab data={data} months={months} idx={idx} ratesOf={ratesOf} />}
 
         {tab === "accounts" && (
