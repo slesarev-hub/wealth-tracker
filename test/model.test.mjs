@@ -261,32 +261,54 @@ test("a pure exchange-rate move is reported as FX, not as income", () => {
     [ratesRow("2026-01", "RUB", 80), ratesRow("2026-02", "RUB", 90)]
   );
   const idx = snapshotIndex(data);
-  const ratesOf = makeRatesOf(data, null);
-  const d = monthlyChange(data, "2026-02", "2026-01", "RUB", ratesOf, idx);
+  const d = monthlyChange(data, "2026-02", "2026-01", "RUB", makeRatesOf(data, null), idx);
   assert.equal(d.change, 10000);
   assert.equal(d.fx, 10000);
-  assert.equal(d.added, 0);
-  assert.equal(d.rest, 0);            // v1 called the whole 10000 "За месяц"
+  assert.equal(d.invReturn, 0);
+  assert.equal(d.other, 0);
 });
 
-test("money the user put in is reported as a contribution, not as income", () => {
+test("moving your own money to a broker changes nothing and is reported as nothing", () => {
+  // 100k leaves the current account and arrives at the broker. Net worth is
+  // unchanged, so every component must be zero. The earlier version reported
+  // "+100k contributed" against "-100k other".
   const data = build(
-    [acc("inv", { type: "investment" })],
+    [acc("cash", { type: "checking" }), acc("inv", { type: "investment" })],
     [
-      snap("s1", "inv", "2026-01", 1000, { contributed: 1000, contribCurrency: "RUB" }),
-      snap("s2", "inv", "2026-02", 3000, { contributed: 2000, contribCurrency: "RUB" }),
+      snap("c1", "cash", "2026-01", 500000), snap("i1", "inv", "2026-01", 0),
+      snap("c2", "cash", "2026-02", 400000),
+      snap("i2", "inv", "2026-02", 100000, { contributed: 100000, contribCurrency: "RUB" }),
     ],
     [ratesRow("2026-01", "RUB", 80), ratesRow("2026-02", "RUB", 80)]
   );
   const idx = snapshotIndex(data);
   const d = monthlyChange(data, "2026-02", "2026-01", "RUB", makeRatesOf(data, null), idx);
-  assert.equal(d.change, 2000);
-  assert.equal(d.added, 2000);
+  assert.equal(d.change, 0);
   assert.equal(d.fx, 0);
-  assert.equal(d.rest, 0);
+  assert.equal(d.invReturn, 0);
+  assert.equal(d.other, 0);
+  assert.equal(d.contributed, 100000, "the transfer is still reported, just not as a gain");
 });
 
-test("a market gain lands in 'rest' once FX and contributions are removed", () => {
+test("a salary that is partly invested shows up once, in full, under 'other'", () => {
+  // +200k salary into the current account, 100k of it moved to the broker.
+  const data = build(
+    [acc("cash", { type: "checking" }), acc("inv", { type: "investment" })],
+    [
+      snap("c1", "cash", "2026-01", 500000), snap("i1", "inv", "2026-01", 0),
+      snap("c2", "cash", "2026-02", 600000),
+      snap("i2", "inv", "2026-02", 100000, { contributed: 100000, contribCurrency: "RUB" }),
+    ],
+    [ratesRow("2026-01", "RUB", 80), ratesRow("2026-02", "RUB", 80)]
+  );
+  const idx = snapshotIndex(data);
+  const d = monthlyChange(data, "2026-02", "2026-01", "RUB", makeRatesOf(data, null), idx);
+  assert.equal(d.change, 200000);
+  assert.equal(d.other, 200000, "the salary must not be split across two tiles");
+  assert.equal(d.invReturn, 0);
+});
+
+test("growth beyond what was put in is the investment return", () => {
   const data = build(
     [acc("inv", { type: "investment" })],
     [
@@ -298,13 +320,31 @@ test("a market gain lands in 'rest' once FX and contributions are removed", () =
   const idx = snapshotIndex(data);
   const d = monthlyChange(data, "2026-02", "2026-01", "RUB", makeRatesOf(data, null), idx);
   assert.equal(d.change, 2500);
-  assert.equal(d.added, 2000);
-  assert.equal(d.rest, 500);
+  assert.equal(d.contributed, 2000);
+  assert.equal(d.invReturn, 500);
+  assert.equal(d.other, 2000, "the 2000 came from somewhere outside the portfolio");
 });
 
-test("change always decomposes exactly into fx + added + rest", () => {
+test("a coin price move is a return, not an exchange-rate effect", () => {
   const data = build(
-    [acc("usd", { currency: "USD" }), acc("inv", { type: "investment" }), acc("loan", { type: "debt" })],
+    [acc("btc", { type: "crypto", currency: "BTC" })],
+    [
+      snap("s1", "btc", "2026-01", 1, { currency: "BTC" }),
+      snap("s2", "btc", "2026-02", 1, { currency: "BTC" }),
+    ],
+    [ratesRow("2026-01", "RUB", 80), ratesRow("2026-01", "BTC", 1 / 100000),
+     ratesRow("2026-02", "RUB", 80), ratesRow("2026-02", "BTC", 1 / 120000)]
+  );
+  const idx = snapshotIndex(data);
+  const d = monthlyChange(data, "2026-02", "2026-01", "RUB", makeRatesOf(data, null), idx);
+  assert.equal(d.change, 1600000);            // 1 BTC: 100k -> 120k USD, at 80 ₽/$
+  assert.equal(d.fx, 0, "a coin's price is not an exchange rate");
+  assert.equal(d.invReturn, 1600000);
+});
+
+test("change always decomposes exactly into fx + invReturn + other", () => {
+  const data = build(
+    [acc("usd", { currency: "USD", type: "checking" }), acc("inv", { type: "investment" }), acc("loan", { type: "debt" })],
     [
       snap("a1", "usd", "2026-01", 500, { currency: "USD" }),
       snap("b1", "inv", "2026-01", 1000, { contributed: 1000, contribCurrency: "RUB" }),
@@ -313,11 +353,16 @@ test("change always decomposes exactly into fx + added + rest", () => {
       snap("b2", "inv", "2026-02", 1800, { contributed: 500, contribCurrency: "RUB" }),
       snap("c2", "loan", "2026-02", 150),
     ],
-    [ratesRow("2026-01", "RUB", 80), ratesRow("2026-02", "RUB", 92)]
+    [ratesRow("2026-01", "RUB", 80), ratesRow("2026-01", "USD", 1),
+     ratesRow("2026-02", "RUB", 92), ratesRow("2026-02", "USD", 1)]
   );
   const idx = snapshotIndex(data);
-  const d = monthlyChange(data, "2026-02", "2026-01", "RUB", makeRatesOf(data, null), idx);
-  assert.ok(Math.abs(d.change - (d.fx + d.added + d.rest)) < 1e-6);
+  const ratesOf = makeRatesOf(data, null);
+  const d = monthlyChange(data, "2026-02", "2026-01", "RUB", ratesOf, idx);
+  assert.ok(Math.abs(d.change - (d.fx + d.invReturn + d.other)) < 1e-6);
+  const t2 = monthTotal(data, "2026-02", "RUB", ratesOf("2026-02").table, idx).total;
+  const t1 = monthTotal(data, "2026-01", "RUB", ratesOf("2026-01").table, idx).total;
+  assert.ok(Math.abs(d.change - (t2 - t1)) < 1e-6, "the change must equal the difference of the two totals");
 });
 
 // ── percentages ─────────────────────────────────────────────────────────────
@@ -642,7 +687,7 @@ test("an account that closed is not credited with an FX move it did not make", (
   const d = monthlyChange(data, "2026-02", "2026-01", "RUB", makeRatesOf(data, null), idx);
   assert.equal(d.fx, 0, "the closed USD account must not contribute a phantom FX gain");
   assert.equal(d.change, -8000);          // the 100 USD (8000 ₽ at 80) left
-  assert.ok(Math.abs(d.change - (d.fx + d.added + d.rest)) < 1e-6);
+  assert.ok(Math.abs(d.change - (d.fx + d.invReturn + d.other)) < 1e-6);
 });
 
 // ── second review round: data must never be silently discarded ──────────────

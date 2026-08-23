@@ -158,7 +158,9 @@ export const costBasis = (data, accountId, month, idx, ratesOf) => {
 
   let amount = 0;
   let exact = true;
+  let estimated = false;
   for (const s of list) {
+    if (s.contribEstimated) { estimated = true; exact = false; }
     const from = denom(s);
     if (from === currency) { amount += s.contributed; continue; }
     const v = convert(s.contributed, from, currency, ratesOf(s.month).table);
@@ -171,6 +173,7 @@ export const costBasis = (data, accountId, month, idx, ratesOf) => {
     amount: roundAmount(amount),
     currency,
     exact,
+    estimated,
     basisIsCoins: hasCoin && !hasFiat,
     mixed: hasCoin && hasFiat,
   };
@@ -194,6 +197,7 @@ export const pnlFor = (data, acc, month, idx, ratesOf) => {
     currency: basis.currency,
     pnl: roundAmount(value - basis.amount),
     exact: basis.exact,
+    estimated: basis.estimated,
     // A basis recorded in coins yields a return expressed in coins: useful as
     // "how many more coins than I put in", but not a fiat return. A mixed
     // series cannot be trusted at all.
@@ -205,58 +209,81 @@ export const pnlFor = (data, acc, month, idx, ratesOf) => {
 
 // ── monthly change, decomposed ───────────────────────────────────────────────
 
-// v1 showed a single "За месяц" number and called it the month's result. It is
-// really three different things added together. This splits them:
+// The headline "за месяц" number is the change in net worth. It is NOT income,
+// and it is made of three things that must not be confused:
 //
-//   change  = total(m) - total(prev)              what the headline number was
-//   fx      = the same holdings revalued          pure exchange-rate movement
-//   added   = contributions recorded this month   money the user put in
-//   rest    = change - fx - added                 everything else (income,
-//                                                 spending, market moves)
+//   change = fx + invReturn + other
+//
+//   fx        revaluation of FIAT holdings because the exchange rate moved.
+//             Crypto is deliberately excluded: a coin's price move is the
+//             whole point of holding it, so it belongs to the return.
+//   invReturn what the investment and crypto accounts earned BEYOND what was
+//             put into them.
+//   other     everything else — salary, spending. A transfer between your own
+//             accounts nets to zero here: the money leaving the current account
+//             and the contribution arriving at the broker cancel out.
+//
+// An earlier version reported the CONTRIBUTION itself as a component of the
+// change. That was wrong: moving 100k from a current account to a broker does
+// not change net worth at all, yet it showed as "+100k contributed" against
+// "-100k other", and a salary that was partly invested appeared split between
+// the two tiles.
 export const monthlyChange = (data, month, prevM, toCurrency, ratesOf, idx) => {
   if (!prevM) return null;
   const rNow = ratesOf(month).table;
   const rPrev = ratesOf(prevM).table;
 
-  const now2 = accountsInMonth(data, month, idx);
-  const now = monthTotal(data, month, toCurrency, rNow, idx);
-  const before = monthTotal(data, prevM, toCurrency, rPrev, idx);
-  const change = now.total - before.total;
-
-  // Revalue last month's holdings at this month's rates: the difference is the
-  // part of `change` that no transaction caused. Only accounts that are still
-  // present this month count — an account that closed did not "move with the
-  // rate", it left, and its exit belongs in `rest`.
-  const stillHere = new Set(now2.map(({ acc }) => acc.id));
-  let fx = 0;
-  for (const { acc, snap } of accountsInMonth(data, prevM, idx)) {
-    if (!stillHere.has(acc.id)) continue;
-    if (snap.currency === toCurrency) continue;
-    const atNow = convert(snap.balance, snap.currency, toCurrency, rNow);
-    const atPrev = convert(snap.balance, snap.currency, toCurrency, rPrev);
-    if (!Number.isFinite(atNow) || !Number.isFinite(atPrev)) continue;
-    fx += (atNow - atPrev) * balSign(acc);
+  const rows = new Map();
+  for (const { acc, snap } of accountsInMonth(data, prevM, idx)) rows.set(acc.id, { acc, prev: snap, now: null, carried: false });
+  for (const { acc, snap, carried } of accountsInMonth(data, month, idx)) {
+    const r = rows.get(acc.id) || { acc, prev: null, now: null, carried: false };
+    r.now = snap; r.carried = carried;
+    rows.set(acc.id, r);
   }
 
-  let added = 0;
-  let addedExact = true;
-  for (const { acc, snap, carried } of now2) {
-    if (carried || snap.contributed === null || snap.contributed === 0) continue;
-    const v = convert(snap.contributed, snap.contribCurrency || snap.currency, toCurrency, rNow);
-    if (!Number.isFinite(v)) { addedExact = false; continue; }
-    added += v * balSign(acc);
+  let fx = 0, invReturn = 0, other = 0, contributed = 0;
+  let exact = true;
+  const unconverted = [];
+
+  for (const { acc, prev, now, carried } of rows.values()) {
+    const sign = balSign(acc);
+    const at = (snap, table) => (snap ? convert(snap.balance, snap.currency, toCurrency, table) : 0);
+
+    const vPrev = at(prev, rPrev);
+    const vPrevAtNow = at(prev, rNow);
+    const vNow = at(now, rNow);
+    if (![vPrev, vPrevAtNow, vNow].every(Number.isFinite)) { unconverted.push(acc); exact = false; continue; }
+
+    // Rate effect on last month's holdings, for fiat only, and only for an
+    // account that is still here: one that closed did not "move with the rate",
+    // it left, and its whole exit belongs in `other`.
+    const fxPart = prev && now && !isCrypto(prev.currency) ? (vPrevAtNow - vPrev) * sign : 0;
+    const realPart = (vNow - vPrev) * sign - fxPart;
+
+    let added = 0;
+    if (now && !carried && now.contributed !== null && now.contributed !== 0) {
+      const v = convert(now.contributed, now.contribCurrency || now.currency, toCurrency, rNow);
+      if (Number.isFinite(v)) added = v * sign; else exact = false;
+    }
+
+    fx += fxPart;
+    contributed += added;
+    if (HAS_PNL.has(acc.type)) invReturn += realPart - added;
+    else other += realPart;
+    if (HAS_PNL.has(acc.type)) other += added;
   }
 
+  const change = fx + invReturn + other;
+  const currencies = new Set([...currenciesInMonth(data, month, idx), ...currenciesInMonth(data, prevM, idx)]);
   return {
     change: roundAmount(change),
     fx: roundAmount(fx),
-    added: roundAmount(added),
-    rest: roundAmount(change - fx - added),
-    addedExact,
-    ratesStamped:
-      stampedFor(ratesOf, month, currenciesInMonth(data, month, idx))
-      && stampedFor(ratesOf, prevM, currenciesInMonth(data, prevM, idx)),
-    unconverted: [...new Set([...now.unconverted, ...before.unconverted])],
+    invReturn: roundAmount(invReturn),
+    other: roundAmount(other),
+    contributed: roundAmount(contributed),
+    exact,
+    ratesStamped: stampedFor(ratesOf, month, currencies) && stampedFor(ratesOf, prevM, currencies),
+    unconverted,
   };
 };
 

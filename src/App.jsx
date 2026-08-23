@@ -718,37 +718,52 @@ export default function App() {
               )}
             </div>
 
-            {/* The month decomposed: v1 showed only the first number. */}
+            {/* The month decomposed. The labels have to carry the meaning on
+                their own; the detail lives in the hover hint, not in a
+                paragraph under the numbers. */}
             <div className="card" style={{ padding: "16px 20px", marginBottom: 24 }}>
               <div className="lbl" style={{ marginBottom: 12 }}>
                 За месяц {prevRecorded ? `· ${monthLabel(prevRecorded)} → ${monthLabel(lastM)}` : ""}
               </div>
               {change ? (
-                <>
-                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(120px,1fr))", gap: 14 }}>
-                    {[
-                      ["Изменение капитала", change.change, true],
-                      ["из них курс", change.fx, false],
-                      ["довнесено", change.added, false],
-                      ["прочее", change.rest, false],
-                    ].map(([label, v, big]) => (
-                      <div key={label}>
-                        <div style={{ fontSize: 10, color: "#6b7280", marginBottom: 4 }}>{label}</div>
-                        <div style={{ fontFamily: "'Syne',sans-serif", fontSize: big ? 22 : 16, fontWeight: 700, color: v >= 0 ? "#6ee7b7" : "#f87171" }}>
-                          {fmtSigned(v)} <span style={{ fontSize: 11, color: "#4b5563" }}>₽</span>
-                        </div>
-                        {big && (() => {
-                          const p = percentChange(change.change, totals ? totals.RUB.total - change.change : null);
-                          return <div style={{ fontSize: 11, color: change.change >= 0 ? "#6ee7b7" : "#f87171", marginTop: 2 }}>{p === null ? "—" : `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`}</div>;
-                        })()}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(130px,1fr))", gap: 14 }}>
+                  {[
+                    {
+                      label: "Капитал", value: change.change, big: true,
+                      hint: "Насколько изменился весь капитал за месяц. Это не доход: сюда входят и курс, и доходность, и зарплата за вычетом трат. Раскладка — в трёх числах справа, они складываются ровно в это.",
+                    },
+                    {
+                      label: "Курс", value: change.fx,
+                      hint: "Переоценка валютных остатков из-за движения курса — денег не прибавилось и не убавилось. Крипта сюда не входит: изменение цены монеты считается доходностью."
+                        + (change.ratesStamped ? "" : " Для этих месяцев курс не зафиксирован, взят сегодняшний — число приблизительное."),
+                      approx: !change.ratesStamped,
+                    },
+                    {
+                      label: "Доходность", value: change.invReturn,
+                      hint: "Сколько инвестиционные и крипто-счета заработали сверх того, что вы в них внесли."
+                        + (change.contributed ? ` Внесено за месяц: ${fmtSigned(change.contributed)} ₽ — это перевод между своими счетами, он не меняет капитал и в раскладку не входит.` : ""),
+                      note: change.contributed ? `внесено ${fmtSigned(change.contributed)} ₽` : null,
+                    },
+                    {
+                      label: "Прочее", value: change.other,
+                      hint: "Всё, что не курс и не доходность: зарплата минус траты. Переводы между своими счетами сюда не попадают — они уже вычтены.",
+                    },
+                  ].map(({ label, value, big, hint, note, approx }) => (
+                    <div key={label} title={hint}>
+                      <div style={{ fontSize: 10, color: "#6b7280", marginBottom: 4, borderBottom: "1px dotted #2a2d38", display: "inline-block", cursor: "help" }}>
+                        {label}{approx ? " ≈" : ""}
                       </div>
-                    ))}
-                  </div>
-                  <div style={{ fontSize: 11, color: "#4b5563", marginTop: 12, lineHeight: 1.6 }}>
-                    «Изменение» — это не доход. «Курс» — переоценка валютных остатков, «довнесено» — ваши пополнения инвестиционных счетов, «прочее» — всё остальное: доходность, зарплата, траты.
-                    {!change.ratesStamped && " Для этих месяцев курс не зафиксирован — используется сегодняшний."}
-                  </div>
-                </>
+                      <div style={{ fontFamily: "'Syne',sans-serif", fontSize: big ? 22 : 16, fontWeight: 700, color: value >= 0 ? "#6ee7b7" : "#f87171" }}>
+                        {fmtSigned(value)} <span style={{ fontSize: 11, color: "#4b5563" }}>₽</span>
+                      </div>
+                      {big && (() => {
+                        const p = percentChange(change.change, totals ? totals.RUB.total - change.change : null);
+                        return <div style={{ fontSize: 11, color: change.change >= 0 ? "#6ee7b7" : "#f87171", marginTop: 2 }}>{p === null ? "—" : `${p >= 0 ? "+" : ""}${p.toFixed(1)}%`}</div>;
+                      })()}
+                      {note && <div style={{ fontSize: 10, color: "#4b5563", marginTop: 2 }}>{note}</div>}
+                    </div>
+                  ))}
+                </div>
               ) : <div style={{ fontSize: 13, color: "#4b5563" }}>Нужно минимум два записанных месяца</div>}
             </div>
 
