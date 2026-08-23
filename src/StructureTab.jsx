@@ -5,16 +5,18 @@ import { BASE_CURRENCY } from "./lib/model.js";
 import { CURRENCY_SYMBOLS, fmtShort, fmtBalance, monthLabel } from "./lib/format.js";
 import { structureFor, OTHER_KEY } from "./lib/structure.js";
 
-// Three hues plus one neutral. A ring cannot promise which hues end up
-// touching — a category absent from the displayed month closes the gap and
-// re-seats its neighbours — so the all-pairs check is the binding one, not the
-// adjacent one. On this surface (#111320) these four clear it: worst pair ΔE
-// 9.0 under protanopia, 15.9 for normal vision, every swatch above 3:1 against
-// the surface. A fourth hue does not: orange vs yellow is 10.6 for normal
-// vision, magenta vs green 1.6 under deuteranopia. The neutral is deliberately
-// warm — a blue-grey scored only 14.4 against slot 1 — and deliberately
-// low-chroma: it is the "everything else" colour, not a category.
-const SLOT = ["#3987e5", "#d95926", "#199e70"];
+// Six hues plus one neutral, all-pairs validated on this surface (#111320):
+// worst pair ΔE 8.4 under protanopia, 15.9 for normal vision, every swatch over
+// 3:1 against the surface. All-pairs is the binding list because a category
+// absent from the displayed month closes the gap and re-seats its neighbours.
+//
+// Lightness deliberately varies — two of these sit outside the equal-weight
+// band. That is the trade that makes six work at all: under deuteranopia hue
+// collapses toward one axis, and lightness is the only channel left that still
+// separates a red from a green. A ring's slices already differ in weight, so
+// equal visual weight is the cheaper thing to spend. The equal-lightness
+// version of this palette caps out at three.
+const SLOT = ["#4a90e2", "#c98500", "#199e70", "#d58cb4", "#a8cdf7", "#f2cd7d"];
 const OTHER = "#6e6a63";
 const SURFACE = "#111320";
 const INK = "#e8eaf0", INK_2 = "#9ca3af", INK_3 = "#6b7280";
@@ -27,13 +29,12 @@ const pct = (x) => (x * 100).toFixed(x >= 0.1 ? 0 : 1) + "%";
 // Ranked bars for a set too large to be a ring. No colour identity is needed —
 // the bar length is the encoding and the name is right there — so the series
 // cap that constrains the donut does not apply here at all.
-const Bars = ({ title, rows, note }) => {
+const Bars = ({ title, rows }) => {
   if (!rows.length) return null;
   const max = rows[0].share || 1;
   return (
     <div className="card" style={{ padding: "18px 20px" }}>
-      <div className="lbl" style={{ marginBottom: note ? 4 : 12 }}>{title}</div>
-      {note && <div style={{ fontSize: 11, color: INK_3, marginBottom: 10 }}>{note}</div>}
+      <div className="lbl" style={{ marginBottom: 12 }}>{title}</div>
       {rows.map((s) => (
         <div key={s.key} style={{ position: "relative", display: "flex", alignItems: "center", gap: 8, padding: "6px 8px", borderRadius: 6 }}>
           <div style={{
@@ -163,7 +164,8 @@ export default function StructureTab({ data, months, idx, ratesOf }) {
   return (
     <div className="fade-in">
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 14, flexWrap: "wrap" }}>
-        <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 20, fontWeight: 700, flex: 1 }}>Активы · структура</div>
+        <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 20, fontWeight: 700, flex: 1, cursor: "help" }}
+          title="Доли считаются от активов. Долги в них не входят — доля от целого не бывает отрицательной.">Активы · структура</div>
         <select className="sel" style={{ width: "auto", padding: "7px 12px", fontSize: 12 }}
           value={m} onChange={(e) => setMonth(e.target.value)}>
           {[...months].reverse().map((x) => <option key={x} value={x}>{monthLabel(x)}</option>)}
@@ -189,12 +191,6 @@ export default function StructureTab({ data, months, idx, ratesOf }) {
         )}
       </div>
 
-      {/* Said once, for all three rings, instead of under only one of them. */}
-      <div style={{ fontSize: 11, color: INK_3, marginBottom: 16, lineHeight: 1.6 }}>
-        Все три разбиения — доли активов{s.liabilities > 0 ? "; долги в них не входят, доля от целого не бывает отрицательной" : ""}.
-        В кольцах цветом выделены три крупнейшие категории, остальные собраны в одну долю — её можно раскрыть в списке.
-      </div>
-
       {s.unconverted.length > 0 && (
         <div style={{ background: "#1a1a12", border: "1px solid #fcd34d44", color: "#fcd34d", borderRadius: 10, padding: "10px 14px", fontSize: 12, marginBottom: 14 }}>
           Без курса и потому не учтены: {s.unconverted.map((a) => a.name).join(", ")}.
@@ -209,8 +205,7 @@ export default function StructureTab({ data, months, idx, ratesOf }) {
               ? `${fmtBalance(x.native, c)} ${CURRENCY_SYMBOLS[c] || c}` : null;
           }} />
         <Donut title="По инструментам" slices={s.byType} total={s.assets} />
-        <Bars title="По счетам" rows={s.accountRows}
-          note="Все счета по величине. Кольцо здесь не годится: двадцать долей не читаются с одного взгляда." />
+        <Bars title="По счетам" rows={s.accountRows} />
       </div>
     </div>
   );

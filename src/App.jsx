@@ -893,8 +893,9 @@ export default function App() {
                   </LineChart>
                 </ResponsiveContainer>
                 {unstampedMonths > 0 && (
-                  <div style={{ fontSize: 11, color: "#4b5563", marginTop: 10 }}>
-                    Для {unstampedMonths} мес. курс не зафиксирован — они пересчитаны по сегодняшнему курсу и будут меняться вместе с ним. Новые записи фиксируют курс месяца.
+                  <div style={{ fontSize: 11, color: "#6b7280", marginTop: 10, cursor: "help", display: "inline-block", borderBottom: "1px dotted #2a2d38" }}
+                    title="Для этих месяцев курс не был зафиксирован, поэтому они пересчитываются по сегодняшнему и будут меняться вместе с ним. Каждая новая запись фиксирует курс своего месяца.">
+                    ≈ {unstampedMonths} мес. без зафиксированного курса
                   </div>
                 )}
               </div>
@@ -1203,10 +1204,11 @@ export default function App() {
               <div><div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>ТИП</div>
                 <select className="sel" value={editAccount.type} onChange={(e) => setEditAccount({ ...editAccount, type: e.target.value })}>
                   {ACCOUNT_TYPES.map((t) => <option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}</select></div>
-              <div><div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>ВАЛЮТА</div>
+              <div><div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6, cursor: "help", borderBottom: "1px dotted #2a2d38", display: "inline-block" }}
+                title="Записи за прошлые месяцы сохранят валюту, в которой были сделаны.">ВАЛЮТА</div>
                 <select className="sel" value={editAccount.currency} onChange={(e) => setEditAccount({ ...editAccount, currency: e.target.value })}>
                   {CURRENCIES.map((c) => <option key={c} value={c}>{c}</option>)}</select>
-                <div style={{ fontSize: 10, color: "#4b5563", marginTop: 6 }}>Записи за прошлые месяцы сохранят свою валюту.</div></div>
+                </div>
             </div>
             <div style={{ display: "flex", gap: 10, marginTop: 24 }}>
               <button className="btn-ghost" style={{ flex: 1 }} onClick={() => setModal(null)}>Отмена</button>
@@ -1258,7 +1260,8 @@ export default function App() {
                           <input className="inp" inputMode="decimal" placeholder="0" value={f.balance} onChange={(e) => set({ balance: e.target.value })} />
                         </div>
                         <div style={{ flex: "1 1 120px" }}>
-                          <div style={{ fontSize: 10, color: "#4b5563", marginBottom: 4 }}>Внесено за месяц</div>
+                          <div style={{ fontSize: 10, color: "#4b5563", marginBottom: 4, cursor: "help", borderBottom: "1px dotted #2a2d38", display: "inline-block" }}
+                            title="Сколько денег вы добавили именно в этом месяце; вывод — со знаком минус. Пусто = не указано. Для крипто-счёта указывайте сумму в рублях, иначе доходность не посчитается.">Внесено за месяц</div>
                           <div style={{ display: "flex", gap: 4 }}>
                             <input className="inp" inputMode="decimal" placeholder="—" value={f.contributed} onChange={(e) => set({ contributed: e.target.value })} />
                             <select className="sel" style={{ width: 78, padding: "10px 6px" }} value={f.contribCurrency} onChange={(e) => set({ contribCurrency: e.target.value })}>
@@ -1281,9 +1284,6 @@ export default function App() {
                 Исправьте выделенные значения — иначе они молча не сохранятся.
               </div>
             )}
-            <div style={{ fontSize: 10, color: "#4b5563", marginTop: 12, lineHeight: 1.6 }}>
-              «Внесено за месяц» — сколько денег вы добавили именно в этом месяце (вывод — со знаком минус). Пусто = не указано. Для крипто-счетов указывайте сумму в рублях, иначе доходность не посчитается.
-            </div>
 
             <div style={{ marginTop: 14, padding: "12px 16px", background: "#0d0f14", borderRadius: 8, fontSize: 13, color: "#9ca3af", display: "flex", justifyContent: "space-between" }}>
               <span>Итого</span><span style={{ color: "#6ee7b7" }}>{fmtShort(formTotal)} ₽</span>

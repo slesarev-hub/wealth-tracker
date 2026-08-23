@@ -3,15 +3,10 @@
 //
 // Two rules drive the design, both from the visualisation guidance:
 //
-//  * At most THREE coloured categories plus a neutral "остальное". A ring
-//    cannot promise which hues end up touching: a category missing from the
-//    displayed month closes the gap, so ANY two slots can become neighbours.
-//    That makes the all-pairs check the binding one, and it fails from four
-//    hues up (orange vs yellow, ΔE 10.6 for normal vision; magenta vs green,
-//    ΔE 1.6 for deuteranopia). Three hues plus the neutral pass it: worst pair
-//    ΔE 9.4 under deuteranopia, 16.0 for normal vision, on surface #111320.
-//    The ranked list below each ring carries every category by name, so nothing
-//    is lost by folding the tail — only the glance is simplified.
+//  * At most SIX coloured categories plus a neutral "остальное". A ring cannot
+//    promise which hues end up touching — a category absent from the displayed
+//    month closes the gap — so the palette is validated on the all-pairs list.
+//    Six clears it only because lightness is allowed to vary; see StructureTab.
 //
 //  * Colour follows the ENTITY, never its rank. Slots are assigned from each
 //    category's total across ALL months, so switching the displayed month never
@@ -23,7 +18,7 @@
 import { ACCOUNT_TYPES, balSign, roundAmount } from "./model.js";
 import { accountsInMonth, convert, monthsOf } from "./calc.js";
 
-export const MAX_SLICES = 3;
+export const MAX_SLICES = 6;
 export const OTHER_KEY = "__other__";
 
 const typeLabel = (t) => ACCOUNT_TYPES.find((x) => x.id === t)?.label || t;

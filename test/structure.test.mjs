@@ -72,10 +72,10 @@ test("a single leftover keeps its own name and its own fields", () => {
 });
 
 test("a currency folded out of the ring keeps its native amount", () => {
-  const cur = ["RUB", "USD", "EUR", "GBP"];
+  const cur = ["RUB", "USD", "EUR", "GBP", "AED", "BTC", "ETH"].slice(0, MAX_SLICES + 1);
   const accounts = cur.map((c, i) => acc("a" + i, { currency: c }));
   const data = build(accounts, accounts.map((a, i) => snap("s" + i, a.id, "2026-01", 1000 - i * 100, { currency: cur[i] })));
-  const s = structureFor(data, "2026-01", "RUB", makeRatesOf(data, { rates: { USD: 1, RUB: 80, EUR: 0.9, GBP: 0.8 } }), snapshotIndex(data));
+  const s = structureFor(data, "2026-01", "RUB", makeRatesOf(data, { rates: { USD: 1, RUB: 80, EUR: 0.9, GBP: 0.8, AED: 3.67, BTC: 1e-5, ETH: 1e-4 } }), snapshotIndex(data));
   const folded = s.byCurrency[MAX_SLICES];
   assert.equal(folded.members, undefined);
   assert.equal(typeof folded.native, "number", "the sixth currency must still show how much of it there is");
