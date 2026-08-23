@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer } from "recharts";
 
 import { BASE_CURRENCY } from "./lib/model.js";
-import { CURRENCY_SYMBOLS, fmtShort, fmtBalance, monthLabel } from "./lib/format.js";
+import { CURRENCY_SYMBOLS, fmtShort, fmtAmount, monthLabel } from "./lib/format.js";
 import { structureFor, OTHER_KEY } from "./lib/structure.js";
 
 // Six hues plus one neutral, all-pairs validated on this surface (#111320):
@@ -44,6 +44,11 @@ const Bars = ({ title, rows }) => {
           <span style={{ position: "relative", fontSize: 12, color: INK_2, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={s.label}>
             {s.icon ? s.icon + " " : ""}{s.label}
           </span>
+          {s.currency && s.currency !== BASE_CURRENCY && (
+            <span style={{ position: "relative", fontSize: 11, color: INK_3, whiteSpace: "nowrap" }}>
+              {fmtAmount(s.native, s.currency)} {CURRENCY_SYMBOLS[s.currency] || s.currency}
+            </span>
+          )}
           <span style={{ position: "relative", fontSize: 12, color: INK, minWidth: 56, textAlign: "right" }}>{fmtShort(s.value)} ₽</span>
           <span style={{ position: "relative", fontSize: 11, color: INK_2, minWidth: 36, textAlign: "right" }}>{pct(s.share)}</span>
         </div>
@@ -202,7 +207,7 @@ export default function StructureTab({ data, months, idx, ratesOf }) {
           secondary={(x) => {
             const c = x.ofKey || x.key;
             return x.native !== undefined && c !== BASE_CURRENCY
-              ? `${fmtBalance(x.native, c)} ${CURRENCY_SYMBOLS[c] || c}` : null;
+              ? `${fmtAmount(x.native, c)} ${CURRENCY_SYMBOLS[c] || c}` : null;
           }} />
         <Donut title="По инструментам" slices={s.byType} total={s.assets} />
         <Bars title="По счетам" rows={s.accountRows} />

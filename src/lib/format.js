@@ -26,6 +26,19 @@ export const fmtBalance = (n, currency) => {
   return fmtShort(n);
 };
 
+// The amount an account actually holds, shown next to its rouble value. These
+// are small numbers where the K-abbreviation loses what matters: "2K €" hides
+// whether it is 2 000 or 2 400. Grouped digits instead, and full precision for
+// crypto.
+export const fmtAmount = (n, currency) => {
+  if (n === null || n === undefined || !Number.isFinite(n)) return "—";
+  if (isCrypto(currency)) return String(Number(n.toPrecision(9)));
+  const abs = Math.abs(n);
+  if (abs >= 10_000_000) return fmtShort(n);
+  const digits = abs > 0 && abs < 100 && !Number.isInteger(n) ? 2 : 0;
+  return n.toLocaleString("ru-RU", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+};
+
 export const fmtSigned = (n) => {
   if (n === null || n === undefined || !Number.isFinite(n)) return "—";
   return (n >= 0 ? "+" : "") + fmtShort(n);

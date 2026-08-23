@@ -12,7 +12,7 @@ import {
   costBasis, pnlFor, monthlyChange, percentChange, accountDelta, breakdown,
   accountsForMonth, accountsInMonth, stampedFor, currenciesInMonth,
 } from "../src/lib/calc.js";
-import { fmtShort, fmtBalance, monthLabel } from "../src/lib/format.js";
+import { fmtShort, fmtBalance, fmtAmount, monthLabel } from "../src/lib/format.js";
 
 const T = "2026-08-01T00:00:00.000Z";
 
@@ -931,4 +931,20 @@ test("a zero contribution costs no price lookup", () => {
     ]
   );
   assert.deepEqual(coinBasisPricePairs(data, "2025-09"), [{ month: "2025-09", currency: "BTC" }]);
+});
+
+test("a native amount is shown in full, not abbreviated away", () => {
+  // "2K €" cannot tell 2 000 from 2 400 — for the amount an account holds that
+  // is the whole point of showing it. The group separator is a non-breaking
+  // space (what ru-RU grouping produces), so the number never wraps mid-figure.
+  const NB = "\u00a0";
+  assert.equal(fmtAmount(2400, "EUR"), `2${NB}400`);
+  assert.equal(fmtAmount(660, "USD"), "660");
+  assert.equal(fmtAmount(276, "USD"), "276");
+  assert.equal(fmtAmount(1234567, "RUB"), `1${NB}234${NB}567`);
+  assert.equal(fmtAmount(0.00254217, "BTC"), "0.00254217");
+  assert.equal(fmtAmount(12.5, "USD"), "12,50");
+  assert.equal(fmtAmount(NaN, "USD"), "\u2014");
+  // absurd numbers still collapse rather than overflowing the row
+  assert.equal(fmtAmount(50_000_000, "RUB"), "50.0M");
 });

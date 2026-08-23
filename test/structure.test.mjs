@@ -153,3 +153,36 @@ test("each month is composed at its own stored rates", () => {
   assert.equal(structureFor(data, "2026-01", "RUB", ratesOf, idx).assets, 16000);
   assert.equal(structureFor(data, "2026-02", "RUB", ratesOf, idx).assets, 18000);
 });
+
+test("a non-rouble account carries its own currency and amount", () => {
+  const data = build(
+    [acc("eur", { name: "тумба у окна", type: "cash", currency: "EUR" }), acc("rub", { name: "под столом", type: "cash" })],
+    [snap("s1", "eur", "2026-01", 2400, { currency: "EUR" }), snap("s2", "rub", "2026-01", 5000)]
+  );
+  const s = structureFor(data, "2026-01", "RUB", makeRatesOf(data, { rates: { USD: 1, RUB: 80, EUR: 0.9 } }), snapshotIndex(data));
+  const eur = s.accountRows.find((x) => x.key === "eur");
+  assert.equal(eur.currency, "EUR");
+  assert.equal(eur.native, 2400, "a rouble figure alone says nothing about the account being in euro");
+  assert.equal(eur.label, "тумба у окна", "a unique name needs no suffix to carry the currency");
+});
+
+test("the currency is only appended when the type does not tell two accounts apart", () => {
+  const data = build(
+    [
+      acc("a", { name: "У родителей", type: "cash", currency: "EUR" }),
+      acc("b", { name: "У родителей", type: "cash", currency: "USD" }),
+      acc("c", { name: "Газпромбанк", type: "deposit" }),
+      acc("d", { name: "Газпромбанк", type: "investment" }),
+    ],
+    [snap("s1", "a", "2026-01", 100, { currency: "EUR" }), snap("s2", "b", "2026-01", 100, { currency: "USD" }),
+     snap("s3", "c", "2026-01", 300), snap("s4", "d", "2026-01", 400)]
+  );
+  const s = structureFor(data, "2026-01", "RUB", makeRatesOf(data, { rates: { USD: 1, RUB: 80, EUR: 0.9 } }), snapshotIndex(data));
+  const by = Object.fromEntries(s.accountRows.map((x) => [x.key, x.label]));
+  assert.equal(by.c, "Газпромбанк · Вклад", "the type already distinguishes these");
+  assert.equal(by.d, "Газпромбанк · Инвестиции");
+  assert.equal(by.a, "У родителей · Наличные EUR", "same name AND same type needs the currency too");
+  assert.equal(by.b, "У родителей · Наличные USD");
+  const labels = s.accountRows.map((x) => x.label);
+  assert.equal(new Set(labels).size, labels.length);
+});

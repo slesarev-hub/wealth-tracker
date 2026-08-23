@@ -30,6 +30,7 @@ const sumsFor = (data, month, toCurrency, table, idx) => {
   const byCurrency = new Map();
   const byType = new Map();
   const byAccount = new Map();
+  const nativeOf = new Map();
   let assets = 0;
   let liabilities = 0;
   const unconverted = [];
@@ -50,8 +51,11 @@ const sumsFor = (data, month, toCurrency, table, idx) => {
 
     byType.set(acc.type, (byType.get(acc.type) || 0) + v);
     byAccount.set(acc.id, (byAccount.get(acc.id) || 0) + v);
+    // Kept so a non-base account can show what it actually holds: a EUR account
+    // reading only "233K ₽" says nothing about it being in euro at all.
+    nativeOf.set(acc.id, { native: snap.balance, currency: snap.currency });
   }
-  return { byCurrency, byType, byAccount, assets, liabilities, unconverted };
+  return { byCurrency, byType, byAccount, nativeOf, assets, liabilities, unconverted };
 };
 
 // The ranking every month is coloured by: each key's total over the whole
@@ -113,12 +117,21 @@ export const structureFor = (data, month, toCurrency, ratesOf, idx) => {
   // both in the ring and inside "Остальное", each showing a different amount.
   const counts = new Map();
   for (const a of data.accounts) counts.set(a.name, (counts.get(a.name) || 0) + 1);
+  // The type usually tells two same-named accounts apart on its own; the
+  // currency is only appended when it does not, because the amount column
+  // already shows the currency of every non-base account.
+  const typeCounts = new Map();
+  for (const a of data.accounts) {
+    const k = `${a.name}|${a.type}`;
+    typeCounts.set(k, (typeCounts.get(k) || 0) + 1);
+  }
   const nameOf = (id) => {
     const a = data.accounts.find((x) => x.id === id);
     if (!a) return id;
     if ((counts.get(a.name) || 0) < 2) return a.name;
     const t = ACCOUNT_TYPES.find((x) => x.id === a.type)?.label || a.type;
-    return `${a.name} · ${t}${a.currency === toCurrency ? "" : " " + a.currency}`;
+    const needCurrency = (typeCounts.get(`${a.name}|${a.type}`) || 0) > 1;
+    return `${a.name} · ${t}${needCurrency ? " " + a.currency : ""}`;
   };
   const iconOf = (id) => typeIcon(data.accounts.find((a) => a.id === id)?.type);
 
@@ -153,6 +166,8 @@ export const structureFor = (data, month, toCurrency, ratesOf, idx) => {
     accountRows: [...s.byAccount.entries()]
       .map(([key, value]) => ({
         key, value: roundAmount(value), icon: iconOf(key), label: nameOf(key),
+        native: s.nativeOf.get(key)?.native,
+        currency: s.nativeOf.get(key)?.currency,
         share: s.assets > 0 ? value / s.assets : 0,
       }))
       .sort((a, b) => b.value - a.value),
