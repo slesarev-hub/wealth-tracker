@@ -12,6 +12,7 @@ import {
   accountsForMonth, accountsInMonth,
 } from "./lib/calc.js";
 import { CURRENCY_SYMBOLS, fmtShort, fmtBalance, fmtSigned, monthLabel } from "./lib/format.js";
+import ReturnsTab from "./ReturnsTab.jsx";
 import { readFromSheets, writeToSheets, createSpreadsheet, SheetsError } from "./lib/sheets.js";
 
 const LS_KEY = "money-tracker-v2";
@@ -45,7 +46,16 @@ export default function App() {
   const dataRef = useRef(data);
   useEffect(() => { dataRef.current = data; }, [data]);
 
-  const [tab, setTab] = useState("dashboard");
+  // The active tab lives in the URL hash so a tab can be bookmarked / reloaded.
+  const TAB_IDS = ["dashboard", "returns", "accounts", "history"];
+  const [tab, setTabState] = useState(() => {
+    const h = typeof window !== "undefined" ? window.location.hash.slice(1) : "";
+    return TAB_IDS.includes(h) ? h : "dashboard";
+  });
+  const setTab = (id) => {
+    setTabState(id);
+    try { history.replaceState(null, "", id === "dashboard" ? window.location.pathname + window.location.search : "#" + id); } catch {}
+  };
   const [modal, setModal] = useState(null);
   const [confirm, setConfirm] = useState(null);
   const [newAccount, setNewAccount] = useState({ name: "", type: "savings", currency: BASE_CURRENCY });
@@ -649,7 +659,7 @@ export default function App() {
           )}
 
           <div style={{ display: "flex", gap: 2 }}>
-            {[["dashboard", "Обзор"], ["accounts", "Счета"], ["history", "История"]].map(([id, label]) => (
+            {[["dashboard", "Обзор"], ["returns", "Доходность"], ["accounts", "Счета"], ["history", "История"]].map(([id, label]) => (
               <button key={id} className="tab-btn" onClick={() => setTab(id)}
                 style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, fontFamily: "inherit", color: tab === id ? "#6ee7b7" : "#6b7280", background: tab === id ? "#1a2820" : "none" }}>{label}</button>
             ))}
@@ -852,6 +862,8 @@ export default function App() {
         )}
 
         {/* ── ACCOUNTS ── */}
+        {tab === "returns" && <ReturnsTab data={data} months={months} idx={idx} ratesOf={ratesOf} />}
+
         {tab === "accounts" && (
           <div className="fade-in">
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
