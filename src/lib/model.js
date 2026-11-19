@@ -15,7 +15,7 @@
 export const SCHEMA_VERSION = 2;
 export const BASE_CURRENCY = "RUB";
 
-export const FIAT_CURRENCIES = ["RUB", "USD", "EUR", "GBP", "AED"];
+export const FIAT_CURRENCIES = ["RUB", "USD", "EUR", "GBP", "AED", "UZS"];
 export const CRYPTO_CURRENCIES = ["BTC", "ETH", "USDT", "SOL", "TON"];
 export const CURRENCIES = [...FIAT_CURRENCIES, ...CRYPTO_CURRENCIES];
 export const CRYPTO_IDS = {

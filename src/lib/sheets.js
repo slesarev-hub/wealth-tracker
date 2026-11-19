@@ -45,7 +45,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Retries a throttled or transient failure instead of surfacing it as a sync
 // error. Nothing here is retried after a successful response, so a write is
 // never applied twice by this path.
-const req = async (token, url, init, attempt = 0) => {
+export const req = async (token, url, init, attempt = 0) => {
   const r = await fetch(url, {
     ...init,
     headers: { Authorization: `Bearer ${token}`, ...(init?.headers || {}) },
@@ -124,7 +124,7 @@ export const createSpreadsheet = async (token) => {
 
 // ── reading ──────────────────────────────────────────────────────────────────
 
-const batchGet = async (token, sid, ranges) => {
+export const batchGet = async (token, sid, ranges) => {
   if (!ranges.length) return {};
   const qs = ranges.map((r) => `ranges=${encodeURIComponent(r)}`).join("&");
   const j = await req(token, `${API}/${sid}/values:batchGet?${qs}&valueRenderOption=UNFORMATTED_VALUE`);
