@@ -17,7 +17,9 @@
 
 import { SCHEMA_VERSION } from "./model.js";
 
-export const ACCOUNT_HEADER = ["id", "name", "type", "currency", "openedMonth", "closedMonth", "updatedAt", "deletedAt"];
+// `institution` came last, after v2 shipped: appending a column keeps every
+// existing row readable, since rows are read by header name.
+export const ACCOUNT_HEADER = ["id", "name", "type", "currency", "openedMonth", "closedMonth", "updatedAt", "deletedAt", "institution"];
 export const SNAPSHOT_HEADER = ["id", "accountId", "month", "balance", "currency", "contributed", "contribCurrency", "contribEstimated", "updatedAt", "deletedAt"];
 export const RATE_HEADER = ["month", "currency", "perUSD", "fetchedAt"];
 export const META_HEADER = ["key", "value"];
@@ -257,7 +259,7 @@ const quarantineRows = (data, kind, header) =>
 
 export const buildValues = (data) => {
   const accounts = [ACCOUNT_HEADER, ...data.accounts.map((a) => [
-    a.id, a.name, a.type, a.currency, a.openedMonth || "", a.closedMonth || "", a.updatedAt || "", a.deletedAt || "",
+    a.id, a.name, a.type, a.currency, a.openedMonth || "", a.closedMonth || "", a.updatedAt || "", a.deletedAt || "", a.institution || "",
   ]), ...quarantineRows(data, "account", ACCOUNT_HEADER)];
   const snapshots = [SNAPSHOT_HEADER, ...data.snapshots.map((s) => [
     s.id, s.accountId, s.month, num(s.balance), s.currency,

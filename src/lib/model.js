@@ -180,6 +180,7 @@ export const normalize = (raw) => {
       currency: normCurrency(a.currency, BASE_CURRENCY),
       openedMonth: isMonth(a.openedMonth) ? a.openedMonth : "",
       closedMonth: isMonth(a.closedMonth) ? a.closedMonth : "",
+      institution: String(a.institution ?? "").trim(),
       updatedAt: a.updatedAt || "",
       deletedAt: a.deletedAt || "",
     });

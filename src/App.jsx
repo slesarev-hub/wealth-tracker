@@ -16,6 +16,11 @@ import {
 import { CURRENCY_SYMBOLS, fmtShort, fmtBalance, fmtSigned, monthLabel } from "./lib/format.js";
 import ReturnsTab from "./ReturnsTab.jsx";
 import StructureTab from "./StructureTab.jsx";
+import FeedTab from "./FeedTab.jsx";
+import BanksTab from "./BanksTab.jsx";
+import SpendingTab from "./SpendingTab.jsx";
+import { readOperations } from "./lib/operations.js";
+import { institutionOf } from "./lib/institutions.js";
 import { readFromSheets, writeToSheets, createSpreadsheet, SheetsError } from "./lib/sheets.js";
 
 const LS_KEY = "money-tracker-v2";
@@ -80,7 +85,7 @@ export default function App() {
   useEffect(() => { dataRef.current = data; }, [data]);
 
   // The active tab lives in the URL hash so a tab can be bookmarked / reloaded.
-  const TAB_IDS = ["dashboard", "returns", "accounts", "history"];
+  const TAB_IDS = ["dashboard", "structure", "banks", "feed", "spending", "returns", "accounts", "history"];
   const [tab, setTabState] = useState(() => {
     const h = typeof window !== "undefined" ? window.location.hash.slice(1) : "";
     return TAB_IDS.includes(h) ? h : "dashboard";
@@ -91,7 +96,7 @@ export default function App() {
   };
   const [modal, setModal] = useState(null);
   const [confirm, setConfirm] = useState(null);
-  const [newAccount, setNewAccount] = useState({ name: "", type: "savings", currency: BASE_CURRENCY });
+  const [newAccount, setNewAccount] = useState({ name: "", type: "savings", currency: BASE_CURRENCY, institution: "" });
   const [editAccount, setEditAccount] = useState(null);
   const [recordMonth, setRecordMonth] = useState(currentMonth());
   const [form, setForm] = useState({});
@@ -365,6 +370,37 @@ export default function App() {
   const months = useMemo(() => monthsOf(data), [data]);
   const ratesOf = useMemo(() => makeRatesOf(data, rates), [data, rates]);
   const lastM = months[months.length - 1] || null;
+
+  // ── operations (own tab in the sheet, read on demand) ──────────────────────
+  // The feed, the spending view and the bank tiles read them; nothing else
+  // does, so they are fetched the first time one of those tabs opens and
+  // kept until the page reloads or ↻ is pressed.
+  const [ops, setOps] = useState({ status: "idle", list: [], error: "", loadedAt: null });
+  const [feedFilter, setFeedFilter] = useState({ q: "", account: "", institution: "", month: "", day: "", flow: "all" });
+  const loadOps = useCallback(async () => {
+    const tk = tokenRef.current, sid = sheetIdRef.current;
+    if (!tk || !sid) return;
+    setOps((o) => ({ ...o, status: "loading", error: "" }));
+    try {
+      const res = await readOperations(tk, sid);
+      setOps({ status: "ready", list: res.operations.filter((op) => !op.deletedAt), error: "", loadedAt: new Date().toISOString() });
+    } catch (e) {
+      if (e instanceof SheetsError && e.needsAuth) handleSheetsError(e);
+      setOps((o) => ({ ...o, status: e instanceof SheetsError && e.needsAuth ? "idle" : "error", error: e?.message || String(e) }));
+    }
+  }, [handleSheetsError]);
+  useEffect(() => {
+    if (["feed", "spending", "banks"].includes(tab) && ops.status === "idle" && token && sheetId) loadOps();
+  }, [tab, ops.status, token, sheetId, loadOps]);
+  const openFeed = (patch) => {
+    setFeedFilter({ q: "", account: "", institution: "", month: "", day: "", flow: "all", ...patch });
+    setTab("feed");
+    try { window.scrollTo(0, 0); } catch {}
+  };
+  const institutionList = useMemo(
+    () => [...new Set(live(data.accounts).map(institutionOf))].sort((a, b) => a.localeCompare(b, "ru")),
+    [data.accounts]
+  );
   const prevRecorded = months.length > 1 ? months[months.length - 2] : null;
 
   const totals = useMemo(() => {
@@ -535,10 +571,10 @@ export default function App() {
       ...dataRef.current,
       accounts: [...dataRef.current.accounts, {
         id: uid(), name, type: newAccount.type, currency: newAccount.currency,
-        openedMonth: "", closedMonth: "", updatedAt: nowIso(), deletedAt: "",
+        openedMonth: "", closedMonth: "", institution: (newAccount.institution || "").trim(), updatedAt: nowIso(), deletedAt: "",
       }],
     }).data);
-    setNewAccount({ name: "", type: "savings", currency: BASE_CURRENCY });
+    setNewAccount({ name: "", type: "savings", currency: BASE_CURRENCY, institution: "" });
     setModal(null);
   };
 
@@ -559,6 +595,7 @@ export default function App() {
         name: editAccount.name.trim() || orig.name,
         type: editAccount.type,
         currency: editAccount.currency,
+        institution: (editAccount.institution || "").trim(),
       });
       setModal(null); setEditAccount(null);
     };
@@ -753,7 +790,7 @@ export default function App() {
           )}
 
           <div style={{ display: "flex", gap: 2, flexWrap: "wrap", justifyContent: "flex-end" }}>
-            {[["dashboard", "Обзор"], ["structure", "Активы"], ["returns", "Доходность"], ["accounts", "Счета"], ["history", "История"]].map(([id, label]) => (
+            {[["dashboard", "Обзор"], ["structure", "Активы"], ["banks", "Банки"], ["feed", "Лента"], ["spending", "Траты"], ["returns", "Доходность"], ["accounts", "Счета"], ["history", "История"]].map(([id, label]) => (
               <button key={id} className="tab-btn" onClick={() => setTab(id)}
                 style={{ padding: "6px 12px", borderRadius: 6, fontSize: 12, fontFamily: "inherit", color: tab === id ? "#6ee7b7" : "#6b7280", background: tab === id ? "#1a2820" : "none" }}>{label}</button>
             ))}
@@ -993,6 +1030,9 @@ export default function App() {
         {/* ── ACCOUNTS ── */}
         {tab === "structure" && <StructureTab data={data} months={months} idx={idx} ratesOf={ratesOf} />}
         {tab === "returns" && <ReturnsTab data={data} months={months} idx={idx} ratesOf={ratesOf} />}
+        {tab === "banks" && <BanksTab data={data} idx={idx} ratesOf={ratesOf} ops={ops} onOpenFeed={openFeed} />}
+        {tab === "feed" && <FeedTab ops={ops} data={data} ratesOf={ratesOf} filter={feedFilter} setFilter={setFeedFilter} onReload={loadOps} signedIn={isConnected} />}
+        {tab === "spending" && <SpendingTab ops={ops} data={data} ratesOf={ratesOf} onReload={loadOps} signedIn={isConnected} onOpenFeed={openFeed} />}
 
         {tab === "accounts" && (
           <div className="fade-in">
@@ -1017,7 +1057,7 @@ export default function App() {
                           {acc.name}
                           {acc.closedMonth && <span style={{ fontSize: 11, color: "#f87171", marginLeft: 8 }}>закрыт {monthLabel(acc.closedMonth)}</span>}
                         </div>
-                        <div style={{ fontSize: 11, color: "#4b5563", marginTop: 3 }}>{typeLabel(acc.type)} · {acc.currency} · {snaps.length} записей</div>
+                        <div style={{ fontSize: 11, color: "#4b5563", marginTop: 3 }}>{institutionOf(acc)} · {typeLabel(acc.type)} · {acc.currency} · {snaps.length} записей</div>
                       </div>
                       <button className="icon-btn" style={{ color: "#9ca3af" }} title="Редактировать"
                         onClick={() => { setEditAccount({ ...acc }); setModal("edit-account"); }}>✏️</button>
@@ -1169,6 +1209,8 @@ export default function App() {
         </div>
       )}
 
+      <datalist id="institution-list">{institutionList.map((i) => <option key={i} value={i} />)}</datalist>
+
       {/* ── MODAL: Add account ── */}
       {modal === "add-account" && (
         <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && setModal(null)}>
@@ -1178,6 +1220,10 @@ export default function App() {
               <div><div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>НАЗВАНИЕ</div>
                 <input className="inp" placeholder="Сбербанк накопительный" value={newAccount.name}
                   onChange={(e) => setNewAccount({ ...newAccount, name: e.target.value })} onKeyDown={(e) => e.key === "Enter" && addAccount()} /></div>
+              <div><div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>БАНК / ОРГАНИЗАЦИЯ</div>
+                <input className="inp" list="institution-list" placeholder={institutionOf({ name: newAccount.name, type: newAccount.type }) || "Газпромбанк"} value={newAccount.institution || ""}
+                  onChange={(e) => setNewAccount({ ...newAccount, institution: e.target.value })} />
+                <div style={{ fontSize: 10, color: "#4b5563", marginTop: 4 }}>Пусто — угадаем по названию: {institutionOf({ name: newAccount.name, type: newAccount.type })}</div></div>
               <div><div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>ТИП</div>
                 <select className="sel" value={newAccount.type} onChange={(e) => setNewAccount({ ...newAccount, type: e.target.value })}>
                   {ACCOUNT_TYPES.map((t) => <option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}</select></div>
@@ -1201,6 +1247,10 @@ export default function App() {
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
               <div><div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>НАЗВАНИЕ</div>
                 <input className="inp" value={editAccount.name} onChange={(e) => setEditAccount({ ...editAccount, name: e.target.value })} /></div>
+              <div><div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>БАНК / ОРГАНИЗАЦИЯ</div>
+                <input className="inp" list="institution-list" placeholder={institutionOf({ name: editAccount.name, type: editAccount.type })} value={editAccount.institution || ""}
+                  onChange={(e) => setEditAccount({ ...editAccount, institution: e.target.value })} />
+                <div style={{ fontSize: 10, color: "#4b5563", marginTop: 4 }}>Пусто — угадаем по названию: {institutionOf({ name: editAccount.name, type: editAccount.type })}</div></div>
               <div><div style={{ fontSize: 11, color: "#6b7280", marginBottom: 6 }}>ТИП</div>
                 <select className="sel" value={editAccount.type} onChange={(e) => setEditAccount({ ...editAccount, type: e.target.value })}>
                   {ACCOUNT_TYPES.map((t) => <option key={t.id} value={t.id}>{t.icon} {t.label}</option>)}</select></div>

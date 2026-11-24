@@ -1,7 +1,7 @@
 import { isCrypto } from "./model.js";
 
 export const CURRENCY_SYMBOLS = {
-  RUB: "₽", USD: "$", EUR: "€", GBP: "£", AED: "د.إ",
+  RUB: "₽", USD: "$", EUR: "€", GBP: "£", AED: "د.إ", UZS: "сум",
   BTC: "₿", ETH: "Ξ", USDT: "₮", SOL: "◎", TON: "💎",
 };
 
