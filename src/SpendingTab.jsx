@@ -36,7 +36,8 @@ const ChartTip = ({ active, payload, currency }) => {
     <div style={{ background: "#1a1d26", border: "1px solid #2a2d38", borderRadius: 8, padding: "8px 12px", fontSize: 12, fontFamily: "DM Mono, monospace" }}>
       <div style={{ color: INK, marginBottom: 4 }}>{monthLabel(m.month)}</div>
       <div style={{ color: INK_2 }}>траты {fmtShort(m.spend)} {sym(currency)}</div>
-      <div style={{ color: INK_3 }}>поступления {fmtShort(m.income)} {sym(currency)}</div>
+      <div style={{ color: INK_3 }}>доход {fmtShort(m.income)} {sym(currency)}</div>
+      {m.received > 0 && <div style={{ color: INK_3 }}>переводы от людей {fmtShort(m.received)} {sym(currency)}</div>}
       <div style={{ color: INK_3 }}>счетов с операциями: {m.accounts.size}</div>
       <div style={{ color: INK_3 }}>операции с {ddmm(m.firstDay)} по {ddmm(m.lastDay)}</div>
     </div>
@@ -113,7 +114,13 @@ export default function SpendingTab({ ops, data, ratesOf, onReload, signedIn, on
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 14 }}>
         <Stat label={selected === "all" ? "Траты за всё время" : `Траты, ${monthLabel(view.month)}`} value={`${fmtShort(view.spend)} ${sym(currency)}`} />
-        <Stat label="Поступления" value={`${fmtShort(view.income)} ${sym(currency)}`} hint="зарплата, проценты, кэшбэк, переводы от людей" />
+        <Stat label="Доход" value={`${fmtShort(view.income)} ${sym(currency)}`} hint="зарплата, проценты, кэшбэк" />
+        <Stat label="Переводы от людей" value={`${fmtShort(view.received)} ${sym(currency)}`}
+          hint={view.received > 0
+            ? <>не доход: возврат долга, возмещение или свои деньги со счёта, которого нет в учёте. Возмещение за покупку размечается возвратом с категорией «За других» — тогда оно гасит покупку.{" "}
+                <button className="tab-btn" style={{ fontSize: 10, color: INK_2, padding: 0, textDecoration: "underline dotted" }}
+                  onClick={() => onOpenFeed({ flow: "income", q: "", month: selected === "all" ? "" : view.month })}>показать в ленте</button></>
+            : "за период не было"} />
         <Stat label="Между своими счетами" value={`${fmtShort(view.moved)} ${sym(currency)}`}
           hint={`не трата. ${view.movesPaired ? `Стоимость переводов (курс, комиссии) по ${view.movesPaired} сведённым: ${fmtShort(view.moveCost)} ${sym(currency)}` : "Сведённых пар нет"}${view.movesUnpaired ? `; без второй стороны: ${view.movesUnpaired}` : ""}`} />
       </div>

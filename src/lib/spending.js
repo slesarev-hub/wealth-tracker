@@ -7,7 +7,10 @@
 // counts at all:
 //   spend  — purchases, payments, fees, cash taken out and not marked, transfers
 //            to other people; a refund or reversal counts as negative spending
-//   income — salary, interest, money from other people
+//   income — salary, interest, cashback; money from other people is counted
+//            apart ("received"): it may be a debt paid back or a reimbursement,
+//            which is not income (a reimbursement marked as a refund in «За
+//            другие» cancels its purchase instead)
 //   own    — a transfer between own accounts: never spending; the difference
 //            between what left and what arrived is the cost of the move
 //            (exchange rate and fees), shown separately.
@@ -23,6 +26,7 @@ export const SPEND_GROUPS = [
   { id: "telecom", label: "Связь и интернет", icon: "📶", categories: ["Связь и интернет", "Мобильная связь", "Связь", "Интернет"] },
   { id: "travel", label: "Путешествия", icon: "✈️", categories: ["Путешествия", "Наличные в поездке", "Отели", "Авиабилеты", "Ж/д билеты", "Турагентства"] },
   { id: "health", label: "Здоровье и красота", icon: "💊", categories: ["Медицинские услуги", "Аптеки", "Салоны красоты", "Медицина", "Красота", "Здоровье"] },
+  { id: "therapy", label: "Психолог", icon: "🧠", categories: ["Психолог", "Психотерапия"] },
   { id: "shopping", label: "Покупки", icon: "🛍️", categories: ["Маркетплейсы", "Разные товары", "Спортивные товары", "Одежда и обувь", "Электроника и техника", "Техника и электроника", "Различные товары", "Фото", "Цветы", "Книги"] },
   { id: "fun", label: "Развлечения", icon: "🎟️", categories: ["Развлечения", "Кино", "Спорт", "Хобби"] },
   { id: "software", label: "ИИ и софт", icon: "🤖", categories: ["Софт"] },
@@ -39,22 +43,24 @@ export const SPEND_GROUPS = [
   { id: "other", label: "Без категории", icon: "•", categories: ["Прочие расходы"] },
 ];
 
-// For operations the bank gave no category (Капиталбанк's statement never
-// does): a few merchant names that say plainly what they are.
+// Капиталбанк's and Bakai's statements carry neither a category nor an MCC
+// code, only the merchant's name; Т-Банк and Газпромбанк leave some rows
+// without a category too. Each rule is a list of name fragments; the first
+// matching rule wins, so the narrower ones come first.
 const MERCHANT_RULES = [
-  [/anthropic|claude\.ai|openai|chatgpt|perplexity|trinka|cursor\.|github|midjourney|jetbrains/i, "software"],
-  [/sportmaster|decathlon|aliexpress|ozon|wildberries|uzum market|flowwow|dufry|beautymania|sinsay|\bshop\b/i, "shopping"],
-  [/supermarket|galmart|korzinka|makro|havas|magnum|carrefour|migros|\bbim\b|\ba101\b|пят[её]рочка|перекр[её]сток|магнит|universam|ovoshhi|frukty/i, "food"],
-  [/hookah|coffee|cafe|кафе|restaurant|kfc|burger|subway|вкусно|pitstsa|pizza|nalunch|mc ?donalds|\bpub\b|\bbar\b|beer|restoran|ресторан/i, "cafe"],
-  [/wingie|aviasales|booking\.com|agoda|airbnb|hotel|airways|aeroflot|pobeda|localrent|\btutu\b/i, "travel"],
+  [/anthropic|claude\.ai|openai|chatgpt|perplexity|trinka|writefull|cursor\.|github|midjourney|jetbrains/i, "software"],
+  [/netflix|onlyfans|apple\.com\/bill|yandex.?plus|justanswer|advocall|сдэк|cdek|pochtasi|почта|t-ins\./i, "services"],
+  [/sportmaster|decathlon|aliexpress|ozon|wildberries|uzum market|flowwow|dufry|beautymania|sinsay|outlet|funpay|\bshop\b/i, "shopping"],
+  [/supermarket|gipermarket|galmart|korzinka|makro|havas|magnum|carrefour|migros|\bbim\b|\ba101\b|\bmarket\b|qandolat|sut urunleri|пят[её]рочка|перекр[её]сток|магнит|universam|ovoshhi|frukty/i, "food"],
+  [/hookah|coffee|cafe|kafe|кафе|restaurant|restau|restoran|ресторан|kfc|burger|wendy|bahandi|subway|вкусно|pitstsa|pizza|nalunch|mc ?donalds|fast ?food|\bfood\b|chaykhana|chayxana|stolovaya|catering|yiyecek|horeca|netmonet|нетмонет|чаевые|\bpub\b|\bbar\b|beer/i, "cafe"],
+  [/wingie|aviasales|booking\.com|agoda|airbnb|hotel|airways|aeroflot|pobeda|localrent|\btutu\b|airport|havalimani|v polete|luggage|qeepl/i, "travel"],
   [/toefl|\bets\b|flywire|edu action|duolingo|coursera|udemy|sobes\.tech/i, "education"],
-  [/yandex.?go|scooters|whoosh|uber|\bbolt\b|taxi|indrive|mytaxi/i, "transport"],
-  [/petrol|\bopet\b|lukoil|\bshell\b|азс/i, "car"],
-  [/ucell|beeline|uzmobile|mobiuz|yesim|airalo/i, "telecom"],
-  [/yandex.?plus|justanswer|advocall/i, "services"],
-  [/orenyeri|muzesi|museum/i, "fun"],
+  [/yandex.?go|scooters|whoosh|uber|\bbolt\b|taxi|indrive|mytaxi|\bstation\b|\bmetro\b/i, "transport"],
+  [/petrol|\bopet\b|lukoil|\bshell\b|zapravka|азс/i, "car"],
+  [/ucell|beeline|uzmobile|mobiuz|yesim|airalo|ростелеком|rostelecom|wi-?fi/i, "telecom"],
+  [/orenyeri|muzesi|muzeev|museum|yanartas/i, "fun"],
   [/\bepgu\b|gosuslugi|госуслуг/i, "docs"],
-  [/apteka|аптека|pharm|beauty/i, "health"],
+  [/apteka|аптека|pharm|beauty|cosmart/i, "health"],
 ];
 
 const GROUP_BY_ID = new Map(SPEND_GROUPS.map((g) => [g.id, g]));
@@ -139,7 +145,7 @@ export const pairOwnTransfers = (ops, valueOf) => {
 };
 
 const blankMonth = (month) => ({
-  month, spend: 0, income: 0, moved: 0, moveCost: 0, movesPaired: 0, movesUnpaired: 0,
+  month, spend: 0, income: 0, received: 0, receivedOps: [], moved: 0, moveCost: 0, movesPaired: 0, movesUnpaired: 0,
   groups: new Map(), days: new Map(), accounts: new Set(), unconverted: 0, firstDay: "", lastDay: "",
 });
 
@@ -173,7 +179,10 @@ export const spendingByMonth = (ops, toCurrency, ratesOf) => {
     const value = convert(op.amount, op.currency, toCurrency, table);
     if (!Number.isFinite(value)) { m.unconverted += 1; continue; }
     const flow = flowOf(op);
-    if (flow === "income") { m.income += value; continue; }
+    if (flow === "income") {
+      if (op.kind === "transfer_in") { m.received += value; m.receivedOps.push({ op, value }); } else m.income += value;
+      continue;
+    }
     if (flow === "own") {
       if (op.amount < 0) {
         m.moved += -value;
@@ -211,7 +220,8 @@ export const spendingByMonth = (ops, toCurrency, ratesOf) => {
 export const mergeMonths = (list) => {
   const out = blankMonth("all");
   for (const m of list) {
-    out.spend += m.spend; out.income += m.income; out.moved += m.moved; out.moveCost += m.moveCost;
+    out.spend += m.spend; out.income += m.income; out.received += m.received; out.receivedOps.push(...m.receivedOps);
+    out.moved += m.moved; out.moveCost += m.moveCost;
     out.movesPaired += m.movesPaired; out.movesUnpaired += m.movesUnpaired; out.unconverted += m.unconverted;
     if (!out.firstDay || m.firstDay < out.firstDay) out.firstDay = m.firstDay;
     if (m.lastDay > out.lastDay) out.lastDay = m.lastDay;

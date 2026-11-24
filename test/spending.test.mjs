@@ -56,6 +56,25 @@ test("bank categories fold into one list; a fee is a fee and unmarked cash is ca
   assert.equal(flowOf(op({ kind: "transfer_in", amount: 5 })), "income");
 });
 
+test("money from other people is not income; a reimbursement cancels its purchase", () => {
+  const ops = [
+    op({ date: "2026-11-05", amount: 100000, kind: "income", category: "Зачисление зарплаты" }),
+    op({ date: "2026-11-07", amount: 5000, kind: "transfer_in", category: "Переводы", merchant: "Друг" }),
+    op({ date: "2026-11-11", amount: -90000, kind: "purchase", category: "За других" }),
+    op({ date: "2026-11-11", amount: 90000, kind: "refund", category: "За других" }),
+  ];
+  const [november] = spendingByMonth(ops, "RUB", () => ({ table: { RUB: 1 } }));
+  assert.equal(november.income, 100000);
+  assert.equal(november.received, 5000);
+  assert.equal(november.spend, 0);
+  assert.equal(mergeMonths([november]).received, 5000);
+});
+
+test("a transfer the bank calls a transfer goes to its own group once it has a category", () => {
+  assert.equal(groupOf(op({ kind: "transfer_out", category: "Финансовые операции", merchant: "А. К." })), "people");
+  assert.equal(groupOf(op({ kind: "transfer_out", category: "Психолог", merchant: "А. К." })), "therapy");
+});
+
 test("a purchase made for others and its reimbursement cancel out in their own group", () => {
   const ops = [
     op({ id: "laptop", accountId: "visa", currency: "USD", amount: -1228.77, category: "За других", date: "2026-11-11" }),
@@ -118,6 +137,11 @@ test("merchants without a bank category land in a group by name", () => {
   assert.equal(groupOf(op({ merchant: "CHECHIL PUB BAR" })), "cafe");
   assert.equal(groupOf(op({ merchant: "BEAUTYMANIA SHOP" })), "shopping");
   assert.equal(groupOf(op({ merchant: "Barbershop" })), "other");
+  assert.equal(groupOf(op({ merchant: "WENDY S", description: "Списание по операциям покупке WENDY S SLIP No 131932" })), "cafe");
+  assert.equal(groupOf(op({ merchant: "BAHANDI FAST FOOD" })), "cafe");
+  assert.equal(groupOf(op({ merchant: "Netflix.com" })), "services");
+  assert.equal(groupOf(op({ merchant: "ALATAU 1 STATION" })), "transport");
+  assert.equal(groupOf(op({ merchant: "Маркет", amount: 2882, kind: "refund" })), "other", "a Yandex Market refund is not a grocery");
   assert.equal(groupOf(op({ merchant: "EPGU GAZPROMPAY", category: "Прочие расходы" })), "docs");
   // The bank's own category still wins over the name.
   assert.equal(groupOf(op({ merchant: "ANTHROPIC", category: "Супермаркеты" })), "food");
