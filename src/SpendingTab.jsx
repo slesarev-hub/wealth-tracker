@@ -11,6 +11,9 @@ import { Empty } from "./FeedTab.jsx";
 
 const INK = "#e8eaf0", INK_2 = "#9ca3af", INK_3 = "#6b7280", LINE = "#141620";
 const BAR = "#4a90e2", BAR_DIM = "#27415f", BAR_FILL = "#1d3a4f", CARD = "#111320";
+// Income beside spending: blue and aqua pass the colour-blind and normal-vision separation checks on the card.
+const INCOME = "#199e70";
+const RANGES = [[12, "год"], [24, "2 года"], [0, "всё"]];
 const CURRENCIES = ["RUB", "USD", "EUR"];
 const sym = (c) => CURRENCY_SYMBOLS[c] || c;
 const pct = (x) => (x * 100).toFixed(x >= 0.1 ? 0 : 1) + "%";
@@ -40,20 +43,24 @@ const ChartTip = ({ active, payload, currency }) => {
   return (
     <div style={{ background: "#1a1d26", border: "1px solid #2a2d38", borderRadius: 8, padding: "8px 12px", fontSize: 12, fontFamily: "DM Mono, monospace" }}>
       <div style={{ color: INK, marginBottom: 4 }}>{monthLabel(m.month)}</div>
-      <div style={{ color: INK_2 }}>траты {fmtShort(m.spend)} {sym(currency)}</div>
-      <div style={{ color: INK_3 }}>доход {fmtShort(m.income)} {sym(currency)}</div>
-      {m.received > 0 && <div style={{ color: INK_3 }}>переводы от людей {fmtShort(m.received)} {sym(currency)}</div>}
+      <div style={{ color: INK_2, display: "flex", alignItems: "center", gap: 6 }}><Swatch color={BAR} />траты {fmtShort(m.spend)} {sym(currency)}</div>
+      <div style={{ color: INK_2, display: "flex", alignItems: "center", gap: 6 }}><Swatch color={INCOME} />доход {fmtShort(m.income)} {sym(currency)}</div>
+      <div style={{ color: m.income - m.spend >= 0 ? INK_2 : INK_3, marginTop: 2 }}>доход − траты {signed(m.income - m.spend)} {sym(currency)}</div>
+      {m.received > 0 && <div style={{ color: INK_3 }}>ещё переводы от людей {fmtShort(m.received)} {sym(currency)}</div>}
       <div style={{ color: INK_3 }}>счетов с операциями: {m.accounts.size}</div>
       <div style={{ color: INK_3 }}>операции с {ddmm(m.firstDay)} по {ddmm(m.lastDay)}</div>
     </div>
   );
 };
 
+const Swatch = ({ color }) => <span style={{ display: "inline-block", width: 9, height: 9, borderRadius: 2, background: color, flexShrink: 0 }} />;
+
 // Where the money went, month by month. Transfers between own accounts are
 // never spending; they are counted apart, with what the moves cost.
 export default function SpendingTab({ ops, data, ratesOf, onReload, signedIn, onOpenFeed }) {
   const [currency, setCurrency] = useState("RUB");
   const [selected, setSelected] = useState(null);
+  const [range, setRange] = useState(12);
   const [openGroup, setOpenGroup] = useState(null);
   const accounts = useMemo(() => new Map(data.accounts.map((a) => [a.id, a])), [data.accounts]);
   const months = useMemo(
@@ -73,7 +80,7 @@ export default function SpendingTab({ ops, data, ratesOf, onReload, signedIn, on
   if (ops.status === "error") return <Empty icon="⚠" text={`Не удалось загрузить операции: ${ops.error}`} action={["Повторить", onReload]} />;
   if (!months.length || !view) return <Empty icon="📭" text="Операций пока нет — статистике не из чего считаться." />;
 
-  const chart = months.slice(-12);
+  const chart = range ? months.slice(-range) : months;
   // The record starts mid-month: that first bar covers only part of it, and says so.
   const first = months[0];
   const partialFirst = first && first.firstDay.slice(8, 10) !== "01" ? first : null;
@@ -94,24 +101,39 @@ export default function SpendingTab({ ops, data, ratesOf, onReload, signedIn, on
 
       <div className="card" style={{ padding: "16px 12px 8px 4px", marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", padding: "0 8px 8px 16px", alignItems: "baseline", gap: 8, flexWrap: "wrap" }}>
-          <span className="lbl">Траты по месяцам, {sym(currency)}</span>
-          <button className="tab-btn" onClick={() => setSelected(selected === "all" ? months[months.length - 1].month : "all")}
-            style={{ fontSize: 11, color: selected === "all" ? "#6ee7b7" : INK_3, padding: "2px 6px" }}>
-            {selected === "all" ? "✓ всё время" : "всё время"}
-          </button>
+          <span className="lbl">Траты и доход по месяцам, {sym(currency)}</span>
+          <span style={{ display: "flex", gap: 2, alignItems: "baseline" }}>
+            {RANGES.map(([n, label]) => (
+              <button key={n} className="tab-btn" onClick={() => setRange(n)}
+                style={{ fontSize: 11, color: range === n ? "#6ee7b7" : INK_3, padding: "2px 6px" }}>{label}</button>
+            ))}
+            <span style={{ color: "#2a2d38", padding: "0 2px" }}>|</span>
+            <button className="tab-btn" onClick={() => setSelected(selected === "all" ? months[months.length - 1].month : "all")}
+              style={{ fontSize: 11, color: selected === "all" ? "#6ee7b7" : INK_3, padding: "2px 6px" }}>
+              {selected === "all" ? "✓ итог за всё время" : "итог за всё время"}
+            </button>
+          </span>
+        </div>
+        <div style={{ display: "flex", gap: 14, padding: "0 8px 6px 16px", fontSize: 11, color: INK_2 }}>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Swatch color={BAR} />Траты</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}><Swatch color={INCOME} />Доход (зарплата, проценты, кэшбэк)</span>
         </div>
         <ResponsiveContainer width="100%" height={170}>
-          <BarChart data={chart} margin={{ top: 4, right: 8, bottom: 0, left: 0 }} barCategoryGap="22%"
+          <BarChart data={chart} margin={{ top: 4, right: 8, bottom: 0, left: 0 }} barCategoryGap={chart.length > 30 ? "10%" : "20%"} barGap={2}
             onClick={(e) => e?.activePayload?.[0] && setSelected(e.activePayload[0].payload.month)}>
-            <XAxis dataKey="month" tickFormatter={(m) => monthLabel(m).slice(0, 3)} tick={{ fill: INK_3, fontSize: 11 }} axisLine={{ stroke: "#1e2030" }} tickLine={false} />
+            <XAxis dataKey="month" tickFormatter={(m) => (chart.length > 12 ? `${m.slice(5, 7)}.${m.slice(2, 4)}` : monthLabel(m).slice(0, 3))}
+              tick={{ fill: INK_3, fontSize: 11 }} axisLine={{ stroke: "#1e2030" }} tickLine={false} interval="preserveStartEnd" minTickGap={14} />
             <YAxis tickFormatter={fmtShort} tick={{ fill: INK_3, fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
             <Tooltip content={<ChartTip currency={currency} />} cursor={{ fill: "#ffffff08" }} />
-            <Bar dataKey="spend" radius={[4, 4, 0, 0]} style={{ cursor: "pointer" }}>
-              {chart.map((m) => <Cell key={m.month} fill={selected === "all" || m.month === selected ? BAR : BAR_DIM} />)}
+            <Bar dataKey="spend" name="Траты" radius={[3, 3, 0, 0]} style={{ cursor: "pointer" }} fill={BAR}>
+              {chart.map((m) => <Cell key={m.month} fillOpacity={selected === "all" || m.month === selected ? 1 : 0.4} />)}
+            </Bar>
+            <Bar dataKey="income" name="Доход" radius={[3, 3, 0, 0]} style={{ cursor: "pointer" }} fill={INCOME}>
+              {chart.map((m) => <Cell key={m.month} fillOpacity={selected === "all" || m.month === selected ? 1 : 0.4} />)}
             </Bar>
           </BarChart>
         </ResponsiveContainer>
-        {partialFirst && (
+        {partialFirst && chart[0]?.month === partialFirst.month && (
           <div style={{ fontSize: 11, color: INK_3, padding: "2px 8px 4px 16px" }}>
             {monthLabel(partialFirst.month)} — неполный: операции в учёте с {ddmm(partialFirst.firstDay)}.
           </div>
@@ -123,7 +145,8 @@ export default function SpendingTab({ ops, data, ratesOf, onReload, signedIn, on
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 14 }}>
         <Stat label={selected === "all" ? "Траты за всё время" : `Траты, ${monthLabel(view.month)}`} value={`${fmtShort(view.spend)} ${sym(currency)}`}
           hint={view.cashSaved > 0 ? `без ${fmtShort(view.cashSaved)} ${sym(currency)} снятых наличных: они нашлись в заначках и на счетах без операций` : ""} />
-        <Stat label="Доход" value={`${fmtShort(view.income)} ${sym(currency)}`} hint="зарплата, проценты, кэшбэк" />
+        <Stat label="Доход" value={`${fmtShort(view.income)} ${sym(currency)}`}
+          hint={`зарплата, проценты, кэшбэк. Доход − траты: ${signed(view.income - view.spend)} ${sym(currency)}`} />
         <Stat label="Переводы от людей" value={`${fmtShort(view.received)} ${sym(currency)}`}
           hint={view.received > 0
             ? <>не доход: возврат долга, возмещение или свои деньги со счёта, которого нет в учёте. Возмещение за покупку размечается возвратом с категорией «За других» — тогда оно гасит покупку.{" "}
