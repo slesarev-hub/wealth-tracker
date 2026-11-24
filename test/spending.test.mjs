@@ -4,6 +4,8 @@ import assert from "node:assert/strict";
 import { institutionOf, shortName, accountLabel, institutionsFor } from "../src/lib/institutions.js";
 import { groupOf, flowOf, dayOf, pairOwnTransfers, spendingByMonth, mergeMonths, opTitle, dailySeries, dailyCap } from "../src/lib/spending.js";
 import { snapshotIndex } from "../src/lib/calc.js";
+import { reconcileMonths } from "../src/lib/reconcile.js";
+import { attributeCash } from "../src/lib/cash.js";
 
 const acc = (fields) => ({ id: fields.name, type: "checking", currency: "RUB", openedMonth: "", closedMonth: "", institution: "", deletedAt: "", ...fields });
 const op = (fields) => ({
@@ -170,4 +172,61 @@ test("one huge day cuts the daily axis; an even month does not", () => {
   const cap = dailyCap([...usual, 800000]);
   assert.ok(cap > 150 && cap < 1000, `cap ${cap}`);
   assert.equal(dailyCap([0, 0, 500000]), null, "too few spending days to call anything an outlier");
+});
+
+test("the gap between operations and capital shows money that went past the operations", () => {
+  const account = (id, type = "checking") => ({ id, name: id, type, currency: "RUB", openedMonth: "", closedMonth: "", institution: "", deletedAt: "" });
+  const snap = (accountId, month, balance) => ({ id: `${accountId}-${month}`, accountId, month, balance, currency: "RUB", deletedAt: "" });
+  const data = {
+    accounts: [account("card"), account("stash", "cash"), account("loan", "debt")],
+    snapshots: [snap("card", "2026-10", 1000), snap("card", "2026-11", 1500), snap("stash", "2026-10", 200), snap("stash", "2026-11", 500),
+      snap("loan", "2026-10", 100), snap("loan", "2026-11", 100)],
+  };
+  const ops = [
+    op({ accountId: "card", date: "2026-11-05", amount: 1000, kind: "income" }),
+    op({ accountId: "card", date: "2026-11-06", amount: -500, kind: "cash" }),
+  ];
+  const rates = () => ({ table: { RUB: 1 } });
+  const months = spendingByMonth(ops, "RUB", rates);
+  const [november] = reconcileMonths(data, months, "RUB", rates, snapshotIndex(data), new Set(["card"]));
+  assert.equal(november.month, "2026-11");
+  assert.equal(november.byOps, 500);
+  assert.equal(november.delta, 800);
+  assert.equal(november.gap, 300, "the cash went into the stash, not into spending");
+  assert.deepEqual(november.moved.map((x) => [x.acc.id, x.change]), [["stash", 300]]);
+});
+
+test("withdrawn cash is spending only beyond what turned up in stashes or was paid in", () => {
+  const account = (id, type = "checking") => ({ id, name: id, type, currency: "RUB", openedMonth: "", closedMonth: "", institution: "", deletedAt: "" });
+  const snap = (accountId, month, balance) => ({ id: `${accountId}-${month}`, accountId, month, balance, currency: "RUB", deletedAt: "" });
+  const data = {
+    accounts: [account("card"), account("stash", "cash"), account("wallet", "cash"), account("broker", "investment")],
+    snapshots: [
+      snap("card", "2026-06", 0), snap("stash", "2026-06", 100), snap("wallet", "2026-06", 0), snap("broker", "2026-06", 0),
+      snap("stash", "2026-07", 140), snap("stash", "2026-08", 140), snap("broker", "2026-08", 500), snap("wallet", "2026-09", 70),
+    ],
+  };
+  const ops = [
+    op({ accountId: "card", date: "2026-07-05", amount: -100, kind: "cash" }),
+    op({ accountId: "card", date: "2026-08-05", amount: -100, kind: "cash" }),
+    op({ accountId: "card", date: "2026-08-20", amount: 30, kind: "own_transfer", category: "Внесение наличных" }),
+    op({ accountId: "card", date: "2026-08-21", amount: -20, kind: "purchase", category: "Супермаркеты" }),
+  ];
+  const rates = () => ({ table: { RUB: 1 } });
+  const months = attributeCash(spendingByMonth(ops, "RUB", rates), data, ops, "RUB", rates);
+  const [july, august] = months;
+  // July: the stash grew by 40 that month. August: 30 paid back into the card; the broker's growth is the
+  // market, not cash. The wallet, recorded in September after nothing since June, holds 70 more: it takes,
+  // oldest first, the 60 July still counts as spent and 10 of August's.
+  assert.equal(july.cashSaved, 40 + 60);
+  assert.equal(july.spend, 0);
+  assert.equal(july.groups.get("cash").total, 0);
+  assert.equal(august.cashSaved, 30 + 10);
+  assert.equal(august.spend, 20 + 60);
+  assert.deepEqual(july.cashSources.map((x) => [x.label, x.amount]), [["stash", 40], ["wallet (остаток записан за 2026-09)", 60]]);
+
+  // A broker top-up its own history shows, with no source among the banks, is where cash may have gone too.
+  const brokerOps = [...ops, op({ accountId: "broker", date: "2026-08-25", amount: 50, kind: "own_transfer", description: "Пополнение" })];
+  const withTopUp = attributeCash(spendingByMonth(brokerOps, "RUB", rates), { ...data, snapshots: data.snapshots.filter((x) => x.accountId !== "wallet") }, brokerOps, "RUB", rates);
+  assert.equal(withTopUp[1].cashSaved, 30 + 50);
 });

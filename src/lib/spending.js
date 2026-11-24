@@ -35,7 +35,8 @@ export const SPEND_GROUPS = [
   { id: "docs", label: "Документы и госуслуги", icon: "📄", categories: ["Документы", "Госуслуги"] },
   { id: "fees", label: "Комиссии банков", icon: "🏦", categories: ["Услуги банка"] },
   { id: "cashSpent", label: "Наличными, без подробностей", icon: "💵", categories: ["Наличные без подробностей"] },
-  { id: "cash", label: "Снято наличными, не размечено", icon: "🏧", categories: [] },
+  // Unmarked withdrawals, minus what turned up in stashes and accounts without operations (see cash.js).
+  { id: "cash", label: "Снято наличными, потрачено", icon: "🏧", categories: [] },
   { id: "people", label: "Переводы людям", icon: "👤", categories: ["Переводы", "Финансовые операции"] },
   // Покупка по просьбе других и их возмещение (возврат с той же категорией) гасят друг друга; остаток —
   // разница курсов, если платил в одной валюте, а вернули в другой.
@@ -221,6 +222,9 @@ export const mergeMonths = (list) => {
   const out = blankMonth("all");
   for (const m of list) {
     out.spend += m.spend; out.income += m.income; out.received += m.received; out.receivedOps.push(...m.receivedOps);
+    out.cashWithdrawn = (out.cashWithdrawn || 0) + (m.cashWithdrawn || 0);
+    out.cashSaved = (out.cashSaved || 0) + (m.cashSaved || 0);
+    out.cashSources = [...(out.cashSources || []), ...(m.cashSources || []).map((item) => ({ ...item, month: m.month }))];
     out.moved += m.moved; out.moveCost += m.moveCost;
     out.movesPaired += m.movesPaired; out.movesUnpaired += m.movesUnpaired; out.unconverted += m.unconverted;
     if (!out.firstDay || m.firstDay < out.firstDay) out.firstDay = m.firstDay;

@@ -3,6 +3,9 @@ import { BarChart, Bar, Cell, LabelList, ReferenceLine, XAxis, YAxis, Tooltip, R
 
 import { CURRENCY_SYMBOLS, fmtShort, fmtAmount, monthLabel } from "./lib/format.js";
 import { accountLabel } from "./lib/institutions.js";
+import { snapshotIndex } from "./lib/calc.js";
+import { reconcileMonths } from "./lib/reconcile.js";
+import { attributeCash } from "./lib/cash.js";
 import { spendingByMonth, mergeMonths, topPayees, opTitle, dayOf, dailySeries, dailyCap, groupInfo } from "./lib/spending.js";
 import { Empty } from "./FeedTab.jsx";
 
@@ -28,6 +31,8 @@ const lastDayOf = (month) => {
   return `${month}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`;
 };
 const RECENT_DAYS = 90;
+const AMBER = "#fbbf24";
+const signed = (v) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${fmtShort(Math.abs(v))}`;
 
 const ChartTip = ({ active, payload, currency }) => {
   if (!active || !payload?.length) return null;
@@ -51,7 +56,10 @@ export default function SpendingTab({ ops, data, ratesOf, onReload, signedIn, on
   const [selected, setSelected] = useState(null);
   const [openGroup, setOpenGroup] = useState(null);
   const accounts = useMemo(() => new Map(data.accounts.map((a) => [a.id, a])), [data.accounts]);
-  const months = useMemo(() => spendingByMonth(ops.list, currency, ratesOf), [ops.list, currency, ratesOf]);
+  const months = useMemo(
+    () => attributeCash(spendingByMonth(ops.list, currency, ratesOf), data, ops.list, currency, ratesOf),
+    [ops.list, currency, ratesOf, data]
+  );
   useEffect(() => {
     if (months.length && (!selected || (selected !== "all" && !months.some((m) => m.month === selected)))) setSelected(months[months.length - 1].month);
   }, [months, selected]);
@@ -113,7 +121,8 @@ export default function SpendingTab({ ops, data, ratesOf, onReload, signedIn, on
       <DailyChart view={view} all={selected === "all"} currency={currency} accounts={accounts} onOpenFeed={onOpenFeed} />
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 10, marginBottom: 14 }}>
-        <Stat label={selected === "all" ? "Траты за всё время" : `Траты, ${monthLabel(view.month)}`} value={`${fmtShort(view.spend)} ${sym(currency)}`} />
+        <Stat label={selected === "all" ? "Траты за всё время" : `Траты, ${monthLabel(view.month)}`} value={`${fmtShort(view.spend)} ${sym(currency)}`}
+          hint={view.cashSaved > 0 ? `без ${fmtShort(view.cashSaved)} ${sym(currency)} снятых наличных: они нашлись в заначках и на счетах без операций` : ""} />
         <Stat label="Доход" value={`${fmtShort(view.income)} ${sym(currency)}`} hint="зарплата, проценты, кэшбэк" />
         <Stat label="Переводы от людей" value={`${fmtShort(view.received)} ${sym(currency)}`}
           hint={view.received > 0
@@ -124,6 +133,9 @@ export default function SpendingTab({ ops, data, ratesOf, onReload, signedIn, on
         <Stat label="Между своими счетами" value={`${fmtShort(view.moved)} ${sym(currency)}`}
           hint={`не трата. ${view.movesPaired ? `Стоимость переводов (курс, комиссии) по ${view.movesPaired} сведённым: ${fmtShort(view.moveCost)} ${sym(currency)}` : "Сведённых пар нет"}${view.movesUnpaired ? `; без второй стороны: ${view.movesUnpaired}` : ""}`} />
       </div>
+
+      <Reconcile data={data} ops={ops.list} months={months} currency={currency} ratesOf={ratesOf} accounts={accounts}
+        selected={selected} onSelect={setSelected} />
 
       <div className="card" style={{ padding: "16px 18px", marginBottom: 14 }}>
         <div className="lbl" style={{ marginBottom: 10 }}>На что</div>
@@ -139,7 +151,7 @@ export default function SpendingTab({ ops, data, ratesOf, onReload, signedIn, on
                 <span style={{ position: "relative", fontSize: 11, color: INK_3 }}>{g.ops.length} шт · {view.spend > 0 ? pct(Math.max(g.total, 0) / view.spend) : "—"}</span>
                 <span style={{ position: "relative", fontSize: 13, color: INK, fontFamily: "DM Mono, monospace", minWidth: 80, textAlign: "right" }}>{fmtShort(g.total)} {sym(currency)}</span>
               </div>
-              {isOpen && <GroupDetail group={g} currency={currency} accounts={accounts} onOpenFeed={onOpenFeed} month={selected === "all" ? "" : view.month} />}
+              {isOpen && <GroupDetail group={g} currency={currency} accounts={accounts} onOpenFeed={onOpenFeed} month={selected === "all" ? "" : view.month} view={view} />}
             </div>
           );
         })}
@@ -147,7 +159,7 @@ export default function SpendingTab({ ops, data, ratesOf, onReload, signedIn, on
 
       <div style={{ fontSize: 11, color: INK_3, lineHeight: 1.7, padding: "0 4px" }}>
         <div>Учтены операции {covered.length} счетов: {covered.join(", ")}. Счёт без операций за период в сумму не попадает — смотрите, все ли банки собраны.</div>
-        <div>Не считается тратой: переводы между своими счетами и снятие наличных в свой кошелёк. Наличные, снятые без пометки, — отдельной строкой «{"Снято наличными, не размечено"}»: когда известно, на что они ушли, их можно разметить.</div>
+        <div>Не считается тратой: переводы между своими счетами и снятие наличных в свой кошелёк. Наличные, снятые без пометки, считаются тратой только в той части, которая не нашлась в росте заначек, вкладов и других счетов без операций и не была внесена на счёт, — строка «Снято наличными, потрачено».</div>
         <div>Суммы в {currency} — по курсу месяца операции.{view.unconverted ? ` Без курса и не учтено: ${view.unconverted} операций.` : ""}</div>
       </div>
     </div>
@@ -164,11 +176,21 @@ function Stat({ label, value, hint }) {
   );
 }
 
-function GroupDetail({ group, currency, accounts, onOpenFeed, month }) {
+function GroupDetail({ group, currency, accounts, onOpenFeed, month, view }) {
   const payees = topPayees(group.ops);
   const shown = group.ops.slice(0, 25);
+  const cashNote = group.id === "cash" && view.cashWithdrawn > 0;
   return (
     <div style={{ padding: "4px 8px 12px 36px", fontSize: 12 }}>
+      {cashNote && (
+        <div style={{ color: INK_3, fontSize: 11, lineHeight: 1.6, margin: "4px 0 8px" }}>
+          Снято без пометки {fmtShort(view.cashWithdrawn)} {sym(currency)}
+          {view.cashSaved > 0
+            ? <>; {fmtShort(view.cashSaved)} из них не трата — нашлись: {view.cashSources.map((x) => `${x.label}${x.month ? ` (${monthLabel(x.month)})` : ""} ${signed(x.amount)}`).join(", ")}.</>
+            : "; в заначках и на счетах без операций за это время прибавки не видно — всё считается тратой."}
+          {" "}Суммы операций ниже — снятые целиком.
+        </div>
+      )}
       <div style={{ color: INK_3, fontSize: 11, margin: "4px 0" }}>Кому больше всего</div>
       {payees.map((p) => (
         <div key={p.key} style={{ display: "flex", gap: 8, padding: "2px 0" }}>
@@ -295,6 +317,72 @@ function DailyChart({ view, all, currency, accounts, onOpenFeed }) {
         {clipped.length ? ` Шкала обрезана на ${fmtShort(series.cap)}, чтобы крупные траты не сплющили остальные дни; выше неё (столбец с разрывом и ↑): ${clipped.map((d) => `${ddmm(d.day)} — ${fmtShort(d.spend)} ${sym(currency)}`).join(", ")}.` : ""}
         {" "}Нажмите на столбец — откроется лента этого дня.
       </div>
+    </div>
+  );
+}
+
+// Income minus spending against what the capital did, month by month: a gap
+// means money went somewhere the operations do not show (see reconcile.js).
+function Reconcile({ data, ops, months, currency, ratesOf, accounts, selected, onSelect }) {
+  const rows = useMemo(() => {
+    const withOps = new Set(ops.map((op) => op.accountId));
+    return reconcileMonths(data, months, currency, ratesOf, snapshotIndex(data), withOps).reverse().slice(0, 12);
+  }, [data, ops, months, currency, ratesOf]);
+  if (!rows.length) return null;
+  const spendOf = new Map(months.map((m) => [m.month, m.spend]));
+  const big = (r) => Math.abs(r.gap) > Math.max(currency === "RUB" ? 50000 : 600, 0.15 * (spendOf.get(r.month) || 0));
+  const current = rows.find((r) => r.month === selected);
+  const total = rows.reduce((sum, r) => ({ byOps: sum.byOps + r.byOps, delta: sum.delta + r.delta, gap: sum.gap + r.gap }), { byOps: 0, delta: 0, gap: 0 });
+  const cell = { padding: "5px 6px", textAlign: "right", fontFamily: "DM Mono, monospace", whiteSpace: "nowrap" };
+  return (
+    <div className="card" style={{ padding: "16px 18px", marginBottom: 14 }}>
+      <div className="lbl" style={{ marginBottom: 6 }}>Сверка с капиталом, {sym(currency)}</div>
+      <div style={{ fontSize: 11, color: INK_3, lineHeight: 1.6, marginBottom: 8 }}>
+        «По операциям» — доход и переводы от людей минус траты и цена своих переводов. «Капитал» — на сколько изменилась сумма всех
+        остатков (оба месяца по курсу более позднего). Разница — деньги, которые прошли мимо операций.
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+          <thead>
+            <tr style={{ color: INK_3, fontSize: 11 }}>
+              <th style={{ ...cell, textAlign: "left", fontFamily: "inherit", fontWeight: 400 }}>Месяц</th>
+              <th style={{ ...cell, fontFamily: "inherit", fontWeight: 400 }}>По операциям</th>
+              <th style={{ ...cell, fontFamily: "inherit", fontWeight: 400 }}>Капитал</th>
+              <th style={{ ...cell, fontFamily: "inherit", fontWeight: 400 }}>Разница</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => (
+              <tr key={r.month} onClick={() => onSelect(r.month)} style={{ cursor: "pointer", borderTop: `1px solid ${LINE}`, background: r.month === selected ? "#ffffff08" : "none" }}>
+                <td style={{ ...cell, textAlign: "left", fontFamily: "inherit", color: INK_2 }}>{monthLabel(r.month)}</td>
+                <td style={{ ...cell, color: INK_2 }}>{signed(r.byOps)}</td>
+                <td style={{ ...cell, color: INK_2 }}>{signed(r.delta)}</td>
+                <td style={{ ...cell, color: big(r) ? AMBER : INK_3 }} title={big(r) ? "большая разница: посмотрите, куда ушли деньги" : ""}>{big(r) ? "⚠ " : ""}{signed(r.gap)}</td>
+              </tr>
+            ))}
+            <tr style={{ borderTop: `1px solid #2a2d38` }}>
+              <td style={{ ...cell, textAlign: "left", fontFamily: "inherit", color: INK_3 }}>итого за {rows.length} мес.</td>
+              <td style={{ ...cell, color: INK_3 }}>{signed(total.byOps)}</td>
+              <td style={{ ...cell, color: INK_3 }}>{signed(total.delta)}</td>
+              <td style={{ ...cell, color: INK_3 }}>{signed(total.gap)}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      {current && (
+        <div style={{ fontSize: 11, color: INK_3, lineHeight: 1.7, marginTop: 10 }}>
+          <div>
+            {monthLabel(current.month)}: счета с операциями изменились на {signed(current.deltaWithOps)}, счета без операций — на {signed(current.deltaWithoutOps)} {sym(currency)}.
+          </div>
+          {current.moved.length > 0 && (
+            <div>Без операций изменились: {current.moved.slice(0, 5).map((x) => `${accountLabel(accounts.get(x.acc.id) || x.acc)} ${signed(x.change)}`).join(", ")}.</div>
+          )}
+          {current.carried.length > 0 && (
+            <div>Остаток за этот месяц не записан у {current.carried.length} счетов без операций: их изменение попадёт в месяц, когда остаток запишут, и разница сдвинется туда.</div>
+          )}
+          <div>Разница больше нуля — капитал вырос сильнее, чем говорят операции (снятые наличные легли в заначку, доход пришёл на счёт без операций, выросли бумаги); меньше нуля — деньги ушли мимо операций (траты наличными из заначек).</div>
+        </div>
+      )}
     </div>
   );
 }
