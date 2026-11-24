@@ -761,7 +761,8 @@ export default function App() {
       `}</style>
 
       <div style={{ borderBottom: "1px solid #1e2030" }}>
-        <div style={{ maxWidth: 760, margin: "0 auto", padding: "0 24px", display: "flex", alignItems: "center", height: 60, gap: 12, flexWrap: "wrap" }}>
+        {/* With eight tabs the row wraps on a narrow screen: the header grows instead of the border cutting through it. */}
+        <div style={{ maxWidth: 760, margin: "0 auto", padding: "10px 24px", display: "flex", alignItems: "center", minHeight: 60, gap: 12, flexWrap: "wrap" }}>
           <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em", flex: 1 }}>
             <span style={{ color: "#6ee7b7" }}>₽</span> wealth tracker
           </div>

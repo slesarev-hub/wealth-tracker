@@ -90,7 +90,10 @@ export default function SpendingTab({ ops, data, ratesOf, onReload, signedIn, on
   return (
     <div className="fade-in">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 12, flexWrap: "wrap" }}>
-        <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 20, fontWeight: 700 }}>Траты</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+          <div style={{ fontFamily: "'Syne',sans-serif", fontSize: 20, fontWeight: 700 }}>Траты</div>
+          <MonthPicker months={months} selected={selected} onSelect={setSelected} />
+        </div>
         <div style={{ display: "flex", gap: 2 }}>
           {CURRENCIES.map((c) => (
             <button key={c} className="tab-btn" onClick={() => setCurrency(c)}
@@ -148,11 +151,14 @@ export default function SpendingTab({ ops, data, ratesOf, onReload, signedIn, on
         <Stat label="Доход" value={`${fmtShort(view.income)} ${sym(currency)}`}
           hint={`зарплата, проценты, кэшбэк. Доход − траты: ${signed(view.income - view.spend)} ${sym(currency)}`} />
         <Stat label="Переводы от людей" value={`${fmtShort(view.received)} ${sym(currency)}`}
-          hint={view.received > 0
-            ? <>не доход: возврат долга, возмещение или свои деньги со счёта, которого нет в учёте. Возмещение за покупку размечается возвратом с категорией «За других» — тогда оно гасит покупку.{" "}
-                <button className="tab-btn" style={{ fontSize: 10, color: INK_2, padding: 0, textDecoration: "underline dotted" }}
-                  onClick={() => onOpenFeed({ flow: "income", q: "", month: selected === "all" ? "" : view.month })}>показать в ленте</button></>
-            : "за период не было"} />
+          hint={<>
+            {view.received > 0
+              ? <>не доход: возмещение или свои деньги со счёта, которого нет в учёте. Возмещение за покупку размечается возвратом с категорией «За других» — тогда оно гасит покупку.{" "}
+                  <button className="tab-btn" style={{ fontSize: 10, color: INK_2, padding: 0, textDecoration: "underline dotted" }}
+                    onClick={() => onOpenFeed({ flow: "income", q: "", month: selected === "all" ? "" : view.month })}>показать в ленте</button></>
+              : "за период не было."}
+            {view.peopleNetted > 0 && <> Переводы туда и обратно с одним человеком в пределах 4 месяцев взаимозачтены и не считаются ни тратой, ни поступлением: {fmtShort(view.peopleNetted)} {sym(currency)}.</>}
+          </>} />
         <Stat label="Между своими счетами" value={`${fmtShort(view.moved)} ${sym(currency)}`}
           hint={`не трата. ${view.movesPaired ? `Стоимость переводов (курс, комиссии) по ${view.movesPaired} сведённым: ${fmtShort(view.moveCost)} ${sym(currency)}` : "Сведённых пар нет"}${view.movesUnpaired ? `; без второй стороны: ${view.movesUnpaired}` : ""}`} />
       </div>
@@ -407,5 +413,30 @@ function Reconcile({ data, ops, months, currency, ratesOf, accounts, selected, o
         </div>
       )}
     </div>
+  );
+}
+
+// Which month the page shows: arrows step through the months with operations, the list jumps to any of them.
+function MonthPicker({ months, selected, onSelect }) {
+  const list = months.map((m) => m.month);
+  const index = list.indexOf(selected);
+  const step = (delta) => {
+    if (selected === "all") return onSelect(list[list.length - 1]);
+    const next = list[index + delta];
+    if (next) onSelect(next);
+  };
+  const arrow = (label, delta, disabled) => (
+    <button className="tab-btn" disabled={disabled} onClick={() => step(delta)} title={delta < 0 ? "Предыдущий месяц" : "Следующий месяц"}
+      style={{ padding: "4px 8px", borderRadius: 6, fontSize: 13, color: disabled ? "#2a2d38" : INK_2, border: "1px solid #1e2030", cursor: disabled ? "default" : "pointer" }}>{label}</button>
+  );
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+      {arrow("‹", -1, selected !== "all" && index <= 0)}
+      <select className="sel" value={selected || ""} onChange={(e) => onSelect(e.target.value)} style={{ width: "auto", padding: "4px 8px", fontSize: 12 }}>
+        <option value="all">Всё время</option>
+        {[...list].reverse().map((m) => <option key={m} value={m}>{monthLabel(m)}</option>)}
+      </select>
+      {arrow("›", 1, selected === "all" || index >= list.length - 1)}
+    </span>
   );
 }

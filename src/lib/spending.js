@@ -145,8 +145,56 @@ export const pairOwnTransfers = (ops, valueOf) => {
   return pairs;
 };
 
+// Money that goes back and forth with the same person is neither spending nor
+// income: a loan and its return, a share sent back for a dinner paid for all.
+// Transfers to a person and from that person offset each other, oldest first,
+// within PEOPLE_WINDOW days in either direction (lent then returned, or
+// borrowed then paid back); only what is left over counts. The person is
+// known by the name banks print: Газпромбанк writes «Александра Вячеславовна
+// Д.», Т-Банк «Александра Д.» — both become «александра д».
+const PEOPLE_WINDOW = 120 * 86400000;
+const PERSON = /^([А-ЯЁ][а-яё]+)(?:\s+[А-ЯЁ][а-яё]+)?\s+([А-ЯЁ])\.?$/;
+export const personOf = (op) => {
+  const found = String(op.merchant || "").trim().match(PERSON);
+  return found ? `${found[1]} ${found[2]}`.toLowerCase() : null;
+};
+export const netPeople = (ops) => {
+  const matched = new Map();
+  const byPerson = new Map();
+  for (const op of ops) {
+    const isOut = op.kind === "transfer_out" && op.amount < 0;
+    const isIn = op.kind === "transfer_in" && op.amount > 0;
+    if (!isOut && !isIn) continue;
+    if (isOut && groupOf(op) !== "people") continue;
+    const person = personOf(op);
+    if (!person) continue;
+    const key = `${person}|${op.currency}`;
+    if (!byPerson.has(key)) byPerson.set(key, []);
+    byPerson.get(key).push(op);
+  }
+  for (const list of byPerson.values()) {
+    list.sort((a, b) => time(a) - time(b));
+    const open = [];
+    for (const op of list) {
+      let left = Math.abs(op.amount);
+      for (const other of open) {
+        if (left <= 0) break;
+        if (Math.sign(other.op.amount) === Math.sign(op.amount) || other.left <= 0) continue;
+        if (time(op) - time(other.op) > PEOPLE_WINDOW) continue;
+        const take = Math.min(left, other.left);
+        other.left -= take;
+        left -= take;
+        matched.set(other.op.id, (matched.get(other.op.id) || 0) + take);
+        matched.set(op.id, (matched.get(op.id) || 0) + take);
+      }
+      open.push({ op, left });
+    }
+  }
+  return matched;
+};
+
 const blankMonth = (month) => ({
-  month, spend: 0, income: 0, received: 0, receivedOps: [], moved: 0, moveCost: 0, movesPaired: 0, movesUnpaired: 0,
+  month, spend: 0, income: 0, received: 0, receivedOps: [], peopleNetted: 0, moved: 0, moveCost: 0, movesPaired: 0, movesUnpaired: 0,
   groups: new Map(), days: new Map(), accounts: new Set(), unconverted: 0, firstDay: "", lastDay: "",
 });
 
@@ -168,6 +216,7 @@ export const spendingByMonth = (ops, toCurrency, ratesOf) => {
   };
   const pairs = pairOwnTransfers(ops, (op) => convert(op.amount, op.currency, toCurrency, ratesOf(monthOfOp(op)).table));
   const pairedIn = new Set([...pairs.values()].map((op) => op.id));
+  const netted = netPeople(ops);
   for (const op of ops) {
     const month = monthOfOp(op);
     if (!/^\d{4}-\d\d$/.test(month)) continue;
@@ -177,8 +226,13 @@ export const spendingByMonth = (ops, toCurrency, ratesOf) => {
     if (!m.firstDay || day < m.firstDay) m.firstDay = day;
     if (day > m.lastDay) m.lastDay = day;
     const table = ratesOf(month).table;
-    const value = convert(op.amount, op.currency, toCurrency, table);
-    if (!Number.isFinite(value)) { m.unconverted += 1; continue; }
+    const full = convert(op.amount, op.currency, toCurrency, table);
+    if (!Number.isFinite(full)) { m.unconverted += 1; continue; }
+    // The part of a transfer offset by one in the other direction with the same person counts nowhere.
+    const offset = netted.get(op.id) ? full * (netted.get(op.id) / Math.abs(op.amount)) : 0;
+    if (offset && op.amount < 0) m.peopleNetted += -offset;
+    const value = full - offset;
+    if (offset && Math.abs(value) < 0.005) continue;
     const flow = flowOf(op);
     if (flow === "income") {
       if (op.kind === "transfer_in") { m.received += value; m.receivedOps.push({ op, value }); } else m.income += value;
@@ -222,6 +276,7 @@ export const mergeMonths = (list) => {
   const out = blankMonth("all");
   for (const m of list) {
     out.spend += m.spend; out.income += m.income; out.received += m.received; out.receivedOps.push(...m.receivedOps);
+    out.peopleNetted += m.peopleNetted || 0;
     out.cashWithdrawn = (out.cashWithdrawn || 0) + (m.cashWithdrawn || 0);
     out.cashSaved = (out.cashSaved || 0) + (m.cashSaved || 0);
     out.cashSources = [...(out.cashSources || []), ...(m.cashSources || []).map((item) => ({ ...item, month: m.month }))];

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { institutionOf, shortName, accountLabel, institutionsFor } from "../src/lib/institutions.js";
-import { groupOf, flowOf, dayOf, pairOwnTransfers, spendingByMonth, mergeMonths, opTitle, dailySeries, dailyCap } from "../src/lib/spending.js";
+import { groupOf, flowOf, dayOf, pairOwnTransfers, spendingByMonth, mergeMonths, opTitle, dailySeries, dailyCap, netPeople, personOf } from "../src/lib/spending.js";
 import { snapshotIndex } from "../src/lib/calc.js";
 import { reconcileMonths } from "../src/lib/reconcile.js";
 import { attributeCash } from "../src/lib/cash.js";
@@ -229,4 +229,24 @@ test("withdrawn cash is spending only beyond what turned up in stashes or was pa
   const brokerOps = [...ops, op({ accountId: "broker", date: "2026-08-25", amount: 50, kind: "own_transfer", description: "Пополнение" })];
   const withTopUp = attributeCash(spendingByMonth(brokerOps, "RUB", rates), { ...data, snapshots: data.snapshots.filter((x) => x.accountId !== "wallet") }, brokerOps, "RUB", rates);
   assert.equal(withTopUp[1].cashSaved, 30 + 50);
+});
+
+test("transfers back and forth with the same person offset each other", () => {
+  assert.equal(personOf(op({ merchant: "Александра Вячеславовна Д." })), "александра д");
+  assert.equal(personOf(op({ merchant: "Александра Д." })), "александра д");
+  assert.equal(personOf(op({ merchant: "CARD2CARD CARD2BPK" })), null);
+  const ops = [
+    op({ id: "lend", date: "2026-08-01", amount: -50000, kind: "transfer_out", category: "Переводы", merchant: "Григорий Владимирович М." }),
+    op({ id: "back", date: "2026-08-20", amount: 30000, kind: "transfer_in", category: "Переводы", merchant: "Григорий М." }),
+    op({ id: "late", date: "2027-02-01", amount: 20000, kind: "transfer_in", category: "Переводы", merchant: "Григорий М." }),
+    op({ id: "gift", date: "2026-08-05", amount: -7000, kind: "transfer_out", category: "Переводы", merchant: "Анна Сергеевна К." }),
+  ];
+  const matched = netPeople(ops);
+  assert.equal(matched.get("lend"), 30000);
+  assert.equal(matched.get("back"), 30000);
+  assert.equal(matched.get("late"), undefined, "more than 120 days after — not the same loan");
+  const [august] = spendingByMonth(ops, "RUB", () => ({ table: { RUB: 1 } }));
+  assert.equal(august.spend, 20000 + 7000);
+  assert.equal(august.received, 0);
+  assert.equal(august.peopleNetted, 30000);
 });
